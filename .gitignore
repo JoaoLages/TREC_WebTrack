@@ -1,0 +1,6 @@
+venv/
+*.egg-info/
+.idea/
+*.pyc
+.env
+DATA

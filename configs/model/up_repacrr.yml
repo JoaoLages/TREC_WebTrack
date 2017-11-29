@@ -1,0 +1,34 @@
+name: REPACRR
+seed: 42
+gpu_device: null
+
+metric: NDCG20
+
+batch_size: 128
+epochs: 2
+
+sim_matrix_config:
+  matrices_path: DATA/corpora/sim_matrices/description
+  max_doc_len: 800
+  max_query_len: 16
+  pos_method: firstk
+  use_context: False
+  ngrams:  # query_window_size x doc_windows_size (square only allowed)
+    - 1
+    - 2
+    - 3
+
+query_idf_config:
+  max_query_len: 16
+  idf_vectors_path: DATA/corpora/query_idf/description
+
+num_negative: 1
+shuffle: True
+filter_size: 32
+top_k: 3
+combine: 32
+plot_model: True
+
+construct_vocab: False
+all_features: False
+
