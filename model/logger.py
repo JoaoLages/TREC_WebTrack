@@ -4,7 +4,7 @@ from math import ceil
 from itertools import chain
 from collections import defaultdict
 from tqdm import tqdm
-from utils.utils import gdeval, trec_eval, read_qrels
+from utils.utils import gdeval, read_qrels
 import tempfile
 import subprocess
 
@@ -17,7 +17,7 @@ AVAILABLE_METRICS = {
 }
 
 
-def ndcg20_err20_mapv(pred, info_dict, model_config):
+def ndcg20_err20(pred, info_dict, model_config):
     # Assertion
     assert 'qids' in info_dict and 'cwids' in info_dict
 
@@ -34,12 +34,10 @@ def ndcg20_err20_mapv(pred, info_dict, model_config):
                 rank += 1
         tmpf.flush()
         val_res = subprocess.check_output([gdeval, '-k', '20', model_config['qrel_file'], tmpf.name]).decode('utf-8')
-        # map_res = subprocess.check_output([trec_eval, '-m', 'map', model_config['qrel_file'], tmpf.name]).decode('utf-8')
     amean_line = val_res.splitlines()[-1]
-    # mapval = map_res.split()[-1]
     cols = amean_line.split(',')
-    ndcg20, err20, mapv = float(cols[-2]), float(cols[-1]), 0  # float(mapval)
-    return ndcg20, err20, mapv
+    ndcg20, err20 = float(cols[-2]), float(cols[-1])
+    return ndcg20, err20
 
 
 def f1_score(gold, pred):
@@ -97,7 +95,7 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
                     rerank_dict[key]['cwids'].append(line[2])
 
             # Get NDCG and ERR
-            ndcg20, err20, _ = ndcg20_err20_mapv(predicted_probs, rerank_dict[key], model_config)
+            ndcg20, err20 = ndcg20_err20(predicted_probs, rerank_dict[key], model_config)
 
             # Add scores
             metric_scores.append(ndcg20)
@@ -117,7 +115,7 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
         metric_names.append('F1_SCORE')
 
     if 'NDCG20' in metrics or 'ERR20' in metrics:
-        ndcg20, err20, _ = ndcg20_err20_mapv(predicted_probs, info_dict, model_config)
+        ndcg20, err20 = ndcg20_err20(predicted_probs, info_dict, model_config)
 
     if 'NDCG20' in metrics:
         metric_scores.append(ndcg20)
