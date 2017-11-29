@@ -14,7 +14,7 @@ Kai Hui, Andrew Yates, Klaus Berberich, Gerard de Melo.
 [RE-PACRR: A Context and Density-Aware Neural Information Retrieval Model](https://arxiv.org/pdf/1706.10192.pdf).
 *In Neu-IR workshop, 2017.*
 
-Its implementation was adapted from the [official release](github.com/khui/repacrr).
+Its implementation was adapted from the [official release](https://github.com/khui/repacrr).
 ### To install run (Python 3.5+):
     pip install -r requirements.txt
     python setup.py develop
