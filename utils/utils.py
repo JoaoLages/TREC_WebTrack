@@ -59,8 +59,8 @@ def write_file(content, file_path, mode='w', encoding='utf-8'):
 
 
 def split_in_sentences(texts):
+    global sentence_tokenizer
     if sentence_tokenizer is None:
-        global sentence_tokenizer
         sentence_tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
     return list(map(sentence_tokenizer.tokenize, texts))
 
