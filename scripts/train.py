@@ -78,16 +78,16 @@ def argument_parser(sys_argv):
         }
         train_combinations = [('train', 'dev')]
 
+        if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
+            # For TREC qrel file
+            assert len(data_config['datasets']['dev']) == 1, \
+                "Only provide one QREL file for dev"
+            model_config['qrel_file'] = data_config['datasets']['dev'][0]
+
     # Pass sim_matrix_config, query_idf_config and num_negative to data_config
     data_config['sim_matrix_config'] = model_config['sim_matrix_config']
     data_config['query_idf_config'] = model_config['query_idf_config']
     data_config['num_negative'] = model_config['num_negative']
-
-    if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
-        # For TREC qrel file
-        assert len(data_config['datasets']['dev']) == 1, \
-            "Only provide one QREL file for dev"
-        model_config['qrel_file'] = data_config['datasets']['dev'][0]
 
     if args.model_folder:
         model_config['model_folder'] = args.model_folder
