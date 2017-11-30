@@ -148,7 +148,7 @@ def build_sim_matrix(query, document, embeddings):
 
 def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_description=True,
                 sim_matrix_config=None, query_idf_config=None, num_negative=1,
-                embeddings_path=None, remove_stopwords=False, shuffle_seed=None):
+                embeddings_path=None, remove_stopwords=False):
     """
     Reads files needed to build a corpus
     """
@@ -174,10 +174,6 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
 
     if sim_matrix_config and query_idf_config:
         assert sim_matrix_config['max_query_len'] == query_idf_config['max_query_len']
-
-    # Shuffle seed
-    if shuffle_seed:
-        np.random.seed(shuffle_seed)
 
     # Dict to hold dataset
     dset = {
@@ -374,19 +370,13 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
                         query_idfs[qid].reshape((1, query_idf_config['max_query_len'], 1)).repeat(qid_counter[qid], axis=0)
                     )
     
-        # Shuffle train indices
-        if shuffle_seed:
-            shuffled_index = np.random.permutation(list(range(len(ys))))
-        else:
-            shuffled_index = list(range(len(ys)))
-    
         # INPUT
         if sim_matrix_config:
             for ngram in pos_batch:
-                dset['input']['pos_ngram_%d' % ngram] = np.array(pos_batch[ngram])[shuffled_index, :]
+                dset['input']['pos_ngram_%d' % ngram] = np.array(pos_batch[ngram])
                 for neg_ind in range(num_negative):
                     dset['input']['neg%d_ngram_%d' % (neg_ind, ngram)] = \
-                        np.array(np.array(neg_batch[ngram][neg_ind]))[shuffled_index, :]
+                        np.array(np.array(neg_batch[ngram][neg_ind]))
     
             # TODO: Add context
             if sim_matrix_config['use_context']:
@@ -396,10 +386,10 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
                 pass
     
         if query_idf_config:
-            dset['input']['query_idf'] = np.concatenate(qidf_batch, axis=0)[shuffled_index, :]
-    
+            dset['input']['query_idf'] = np.concatenate(qidf_batch, axis=0)
+
         # OUTPUT
-        dset['output']['tags'] = np.array(ys)[shuffled_index]
+        dset['output']['tags'] = np.array(ys)
     
     else:
         # Dev/Test
@@ -431,7 +421,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
 
         # INPUT
         dset['input'] = {'doc_ngram_%d' % ngram: np.array(np.array(doc_vec[ngram])) for ngram in doc_vec}
-        dset['input']['query_idf'] = np.concatenate(q_idfs, axis=0)
+        if query_idf_config:
+            dset['input']['query_idf'] = np.concatenate(q_idfs, axis=0)
         # TODO: Add context
         if sim_matrix_config['use_context']:
             # test_data['doc_context'] = np.array(contexts)
@@ -493,8 +484,7 @@ class Data(DataTemplate):
                 query_idf_config=config['query_idf_config'],
                 num_negative=config['num_negative'],
                 remove_stopwords=config['remove_stopwords'],
-                dset_folder="%s/%s" % (config['config_name'], dset),
-                shuffle_seed=config['shuffle_seed']
+                dset_folder="%s/%s" % (config['config_name'], dset)
             )
             self.nr_samples[dset] = \
                 len(self.datasets[dset]['output']['tags'])
@@ -524,22 +514,30 @@ class Data(DataTemplate):
 
         if shuffle_seed:
             # Shuffle data
-
-            idx = range(len(dset['output']['tags']))
+            idx = list(range(len(dset['output']['tags'])))
             random_state = np.random.RandomState(shuffle_seed)
             random_state.shuffle(idx)
 
             # Sort
             for key, value in dset['input'].items():
                 if key != 'meta-data':
-                    dset['input'][key] = [value[i] for i in idx]
+                    if isinstance(value, np.ndarray):
+                        dset['input'][key] = value[idx]
+                    else:
+                        dset['input'][key] = [value[i] for i in idx]
                 else:
                     for mkey, mvalue in dset['input']['meta-data'].items():
-                        dset['input']['meta-data'][mkey] = [
-                            mvalue[i] for i in idx
-                        ]
+                        if isinstance(value, np.ndarray):
+                            dset['input'][mkey] = mvalue[idx]
+                        else:
+                            dset['input']['meta-data'][mkey] = [
+                                mvalue[i] for i in idx
+                            ]
             for key, value in dset['output'].items():
-                dset['output'][key] = [value[i] for i in idx]
+                if isinstance(value, np.ndarray):
+                    dset['input'][key] = value[idx]
+                else:
+                    dset['output'][key] = [value[i] for i in idx]
 
         data = []
         # Ignore output when solicited

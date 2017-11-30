@@ -97,11 +97,11 @@ def argument_parser(sys_argv):
     if args.overload:
         config = edit_config(config, args.overload)
 
-    # Remove train from data config
+    # Remove train and dev from data config
     config['datasets'] = {
         dset: config['datasets'][dset]
         for dset in config['datasets']
-        if dset != 'train'
+        if dset not in ['train', 'dev']
     }
 
     # Force test to run on CPU
@@ -132,7 +132,7 @@ if __name__ == '__main__':
     if args.datasets:
         dsets = args.datasets
     else:
-        dsets = ['dev', 'test']
+        dsets = ['test']
 
     for dset in dsets:
         if qrel_file_flag:

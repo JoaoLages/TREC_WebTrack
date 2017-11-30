@@ -154,24 +154,25 @@ def color(x, color_select):
 class TrainLogger():
 
     def __init__(self, config=None):
-        # FIXME: This has to be more general
         self.config = config
         self.state = None
         self.metrics = {m: [] for m in [config['monitoring_metric']] + config['metrics']}
 
-        # FIXME: Needs to be more general, together with isbest(result, previous)
         self.best_monitoring_metric = 0.
+        self.epoch = 0
         self.best_epoch = 0
-        self.n_samples = config['nr_samples']
+        self.n_samples = None  # update_nrsamples will have to be called
         self.b_size = config['batch_size']
+        self.pbar = None
+        self.init_time = time.time()
+
+    def reset_logger(self, n_samples):
+        self.n_samples = n_samples
         if self.b_size:
             self.n_batches = ceil(self.n_samples / self.b_size)
         else:
             self.n_batches = 1
         self.batch_idx = 0
-        self.epoch = 0
-        self.pbar = None
-        self.init_time = time.time()
 
     def update_on_batch(self, objective):
         if objective:
@@ -231,7 +232,6 @@ class TrainLogger():
         self.epoch += 1
 
         color_select = 'red'
-        # FIXME: Needs to be more general. Something like isbest(result, previous)
         if self.metrics[self.config['monitoring_metric']][-1] > \
                 self.best_monitoring_metric:
             self.state = 'save'

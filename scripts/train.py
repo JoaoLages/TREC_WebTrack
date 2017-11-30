@@ -43,16 +43,40 @@ def argument_parser(sys_argv):
         nargs='+',
         type=str
     )
+    parser.add_argument(
+        '--round-robin',
+        help="If true, does every train combination (every train folder gets to be validation once)",
+        default=False,
+        type=bool
+    )
     args = parser.parse_args(sys_argv)
 
     data_config = parse_config(args.data_config)
     model_config = parse_config(args.model_config)
 
-    # Retain only train and dev
-    data_config['datasets'] = {
-        'train': data_config['datasets']['train'],
-        'dev': data_config['datasets']['dev']
-    }
+    if args.round_robin:
+        assert 'dev' not in data_config['datasets'], \
+            "When using --round-robin, dev can't be specified, put all files under 'train'"
+        assert len(data_config['datasets']['train']) >= 2, \
+            "Please provide more than 1 file for train when using --round-robin"
+
+        # Get train combinations (leave 1 out for dev)
+        train_combinations = []
+        aux_dict = {}
+        for i, dev_file in enumerate(data_config['datasets']['train']):
+            train_combinations.append(('train_%d' % (i+1), 'dev_%d' % (i+1)))
+            aux_dict['train_%d' % (i+1)] = [data_config['datasets']['train'][:i]+data_config['datasets']['train'][i+1:]]
+            aux_dict['dev_%d' % (i+1)] = [dev_file]
+
+        # Replace with aux_dict
+        data_config['datasets'] = aux_dict
+    else:
+        # Retain only train and dev
+        data_config['datasets'] = {
+            'train': data_config['datasets']['train'],
+            'dev': data_config['datasets']['dev']
+        }
+        train_combinations = [('train', 'dev')]
 
     # Pass sim_matrix_config, query_idf_config and num_negative to data_config
     data_config['sim_matrix_config'] = model_config['sim_matrix_config']
@@ -87,64 +111,71 @@ def argument_parser(sys_argv):
                 config['model']['gpu_device'] = [config['model']['gpu_device']]
             os.environ["CUDA_VISIBLE_DEVICES"] = "%s" % ','.join(str(x) for x in config['model']['gpu_device'])
 
-    return config
+    return config, train_combinations
 
 
 if __name__ == '__main__':
 
     # Argument handling
-    config = argument_parser(sys.argv[1:])
+    config, train_combinations = argument_parser(sys.argv[1:])
 
     # Load data
     data = Data(config=config['data'])
 
-    # Load model
-    model = ModelInterface(config=config['model'])
-
-    # Initialize features
-    if not model.initialized:
-        model.initialize_features(data)
-
-    # Train
-    train_features = data.batches(
-        'train',
-        batch_size=config['model']['batch_size'],
-        features_model=model.get_features
-    )
-    # Dev
-    dev_features = data.batches(
-        'dev',
-        batch_size=config['model']['batch_size'],
-        features_model=model.get_features
-    )
+    # Start train logger
     logger_config = {
-        'nr_samples': train_features.nr_samples,
         'batch_size': config['model']['batch_size'],
         'monitoring_metric': config['monitoring_metric'],
         'metrics': config['metrics']
     }
-
-    # Start trainer
     train_logger = TrainLogger(logger_config)
-    for epoch_n in range(config['model']['epochs']):
+
+    # Iterate through train combinations
+    for i, (train, dev) in enumerate(train_combinations):
+        # Load model
+        model = ModelInterface(config=config['model'])
+
+        # Initialize features
+        if not model.initialized:
+            model.initialize_features(data)
 
         # Train
-        for batch in train_features:
-            objective = model.update(**batch)
-            train_logger.update_on_batch(objective)
+        train_features = data.batches(
+            train,
+            batch_size=config['model']['batch_size'],
+            features_model=model.get_features,
+            shuffle_seed=config['data']['shuffle_seed']
+        )
+        # Dev
+        dev_features = data.batches(
+            dev,
+            batch_size=config['model']['batch_size'],
+            features_model=model.get_features,
+            shuffle_seed=config['data']['shuffle_seed']
+        )
 
-        # Validation
-        predictions = []
-        gold = []
-        meta_data = []
-        for batch in dev_features:
-            predictions.append(model.predict(batch['input']))
-            gold.append(batch['output'])
-            if 'meta-data' in batch['input']:
-                meta_data.append(batch['input']['meta-data'])
+        # Reset train logger
+        train_logger.reset_logger(train_features.nr_samples)
 
-        train_logger.update_on_epoch(predictions, gold, meta_data, config['model'])
-        if train_logger.state == 'save':
-            model.save()
+        # Start epoch training
+        for epoch_n in range(config['model']['epochs']):
+            # Train
+            for batch in train_features:
+                objective = model.update(**batch)
+                train_logger.update_on_batch(objective)
+
+            # Validation
+            predictions = []
+            gold = []
+            meta_data = []
+            for batch in dev_features:
+                predictions.append(model.predict(batch['input']))
+                gold.append(batch['output'])
+                if 'meta-data' in batch['input']:
+                    meta_data.append(batch['input']['meta-data'])
+
+            train_logger.update_on_epoch(predictions, gold, meta_data, config['model'])
+            if train_logger.state == 'save':
+                model.save()
 
     print("Model saved under %s" % config['model']['model_folder'])
