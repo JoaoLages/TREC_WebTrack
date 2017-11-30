@@ -1,7 +1,7 @@
 # TREC WebTrack 2013 and 2014
 This is a repository used to employ Machine Learning models on the adhoc task of Web Track 2013 and 2014.
 
-Since the cost of computing the relevance score for every query-document pair is too high, the method used to evaluate the models is to rerank the QL submissions of each year, that you can find here.
+Since the cost of computing the relevance score for every query-document pair is too high, the method used to evaluate the models is to rerank the QL submissions of each year, that you can find [here](https://github.com/trec-web/trec-web-2014/tree/master/data/runs/baselines).
 
 **This repo is still under development. Any issues, PRs or suggestions will be welcome.**
 It currently only has an implementation of the model described in:
@@ -30,7 +30,7 @@ Its implementation was adapted from the [official release](https://github.com/kh
 
 ### Create a softlink to point to your stored data:
 
-`ln -s path_to_your_data DATA`
+    ln -s path_to_your_data DATA
 
 From now on, it depends if you want to only reproduce REPACRR results or to run your own version of the model.
 
