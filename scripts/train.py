@@ -65,7 +65,7 @@ def argument_parser(sys_argv):
         aux_dict = {}
         for i, dev_file in enumerate(data_config['datasets']['train']):
             train_combinations.append(('train_%d' % (i+1), 'dev_%d' % (i+1)))
-            aux_dict['train_%d' % (i+1)] = [data_config['datasets']['train'][:i]+data_config['datasets']['train'][i+1:]]
+            aux_dict['train_%d' % (i+1)] = data_config['datasets']['train'][:i]+data_config['datasets']['train'][i+1:]
             aux_dict['dev_%d' % (i+1)] = [dev_file]
 
         # Replace with aux_dict
