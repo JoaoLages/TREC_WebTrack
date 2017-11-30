@@ -47,7 +47,7 @@ def argument_parser(sys_argv):
         '--round-robin',
         help="If true, does every train combination (every train folder gets to be validation once)",
         default=False,
-        type=bool
+        action='store_true'
     )
     args = parser.parse_args(sys_argv)
 
