@@ -105,100 +105,43 @@ if __name__ == '__main__':
     if not model.initialized:
         model.initialize_features(data)
 
-    # Get data iterators over features
-    if config['model']['all_features']:
-        # Train
-        train_data = data.batches(
-            'train',
-            batch_size=data.size('train')
-        )
-        # Dev
-        dev_data = data.batches(
-            'dev',
-            batch_size=data.size('dev')
-        )
-        # All data
-        all_data = {
-            'input': {
-                'train': train_data[0]['input'],
-                'test': dev_data[0]['input']
-            },
-            'output': {
-                'train': train_data[0]['output'],
-                'test': dev_data[0]['output']
-            }
-        }
-
-        train_features, dev_features, nr_samples = \
-            model.get_features(**all_data)
-        logger_config = {
-            'nr_samples': nr_samples,
-            'batch_size': config['model']['batch_size'],
-            'monitoring_metric': config['monitoring_metric'],
-            'metrics': config['metrics']
-        }
-
-    else:
-        # Train
-        train_features = data.batches(
-            'train',
-            batch_size=config['model']['batch_size'],
-            features_model=model.get_features
-        )
-        # Dev
-        dev_features = data.batches(
-            'dev',
-            batch_size=config['model']['batch_size'],
-            features_model=model.get_features
-        )
-        logger_config = {
-            'nr_samples': train_features.nr_samples,
-            'batch_size': config['model']['batch_size'],
-            'monitoring_metric': config['monitoring_metric'],
-            'metrics': config['metrics']
-        }
+    # Train
+    train_features = data.batches(
+        'train',
+        batch_size=config['model']['batch_size'],
+        features_model=model.get_features
+    )
+    # Dev
+    dev_features = data.batches(
+        'dev',
+        batch_size=config['model']['batch_size'],
+        features_model=model.get_features
+    )
+    logger_config = {
+        'nr_samples': train_features.nr_samples,
+        'batch_size': config['model']['batch_size'],
+        'monitoring_metric': config['monitoring_metric'],
+        'metrics': config['metrics']
+    }
 
     # Start trainer
     train_logger = TrainLogger(logger_config)
     for epoch_n in range(config['model']['epochs']):
 
         # Train
-        if config['model']['all_features']:
-            indices = list(range(logger_config['nr_samples']))
-            for i in range(ceil(logger_config['nr_samples'] / config['model']['batch_size'])):
-                batch_indices = indices[i * config['model']['batch_size']: (i + 1) * config['model']['batch_size']]
-                # Construct batch
-                batch = {
-                    'input': {},
-                    'output': {}
-                }
-                for key in train_features['input']:
-                    batch['input'][key] = [train_features['input'][key][i]
-                                           for i in batch_indices]
-                for key in train_features['output']:
-                    batch['output'][key] = [train_features['output'][key][i]
-                                            for i in batch_indices]
-
-                objective = model.update(**batch)
-                train_logger.update_on_batch(objective)
-        else:
-            for batch in train_features:
-                objective = model.update(**batch)
-                train_logger.update_on_batch(objective)
+        for batch in train_features:
+            objective = model.update(**batch)
+            train_logger.update_on_batch(objective)
 
         # Validation
         predictions = []
         gold = []
         meta_data = []
-        if config['model']['all_features']:
-            predictions.append(model.predict(dev_features['input']))
-            gold.append(dev_features['output'])
-        else:
-            for batch in dev_features:
-                predictions.append(model.predict(batch['input']))
-                gold.append(batch['output'])
-                if 'meta-data' in batch['input']:
-                    meta_data.append(batch['input']['meta-data'])
+        for batch in dev_features:
+            predictions.append(model.predict(batch['input']))
+            gold.append(batch['output'])
+            if 'meta-data' in batch['input']:
+                meta_data.append(batch['input']['meta-data'])
 
         train_logger.update_on_epoch(predictions, gold, meta_data, config['model'])
         if train_logger.state == 'save':

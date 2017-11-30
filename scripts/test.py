@@ -77,12 +77,6 @@ def argument_parser(sys_argv):
         type=str
     )
     parser.add_argument(
-        '--all-features',
-        help="Extract all features at once",
-        default=False,
-        type=bool
-    )
-    parser.add_argument(
         '--overload',
         help="Pairs of parameters to overload",
         nargs='+',
@@ -158,52 +152,22 @@ if __name__ == '__main__':
             # Delete rerank files
             data_config['datasets'][dset] = qrel_file
 
-        # Get data iterators over features
-        if args.all_features:
-            # Train
-            train_data = data.batches(
-                'train',
-                batch_size=data.size('train')
-            )
-            # Dev
-            set_data = data.batches(
-                dset,
-                batch_size=data.size(dset)
-            )
-            # All data
-            all_data = {
-                'input': {
-                    'train': train_data[0]['input'],
-                    'test': set_data[0]['input']
-                },
-                'output': {
-                    'train': train_data[0]['output'],
-                    'test': set_data[0]['output']
-                }
-            }
+        # Train
+        set_features = data.batches(
+            dset,
+            batch_size=model.config['batch_size'],
+            features_model=model.get_features
+        )
 
-            _, set_features, _ = \
-                model.get_features(**all_data)
-        else:
-            set_features = data.batches(
-                dset,
-                batch_size=model.config['batch_size'],
-                features_model=model.get_features
-            )
-
-        # Over batches
+        # Predict
         predictions = []
         gold = []
         meta_data = []
-        if args.all_features:
-            predictions.append(model.predict(set_features['input']))
-            gold.append(set_features['output'])
-        else:
-            for batch in set_features:
-                predictions.append(model.predict(batch['input']))
-                gold.append(batch['output'])
-                if 'meta-data' in batch['input']:
-                    meta_data.append(batch['input']['meta-data'])
+        for batch in set_features:
+            predictions.append(model.predict(batch['input']))
+            gold.append(batch['output'])
+            if 'meta-data' in batch['input']:
+                meta_data.append(batch['input']['meta-data'])
 
         # Evaluate
         if args.metrics:
