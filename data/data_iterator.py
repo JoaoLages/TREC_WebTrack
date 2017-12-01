@@ -279,7 +279,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
     pool.close()
     pool.join()
 
-    if dset_folder[-5:] == 'train':
+    # FIXME: Needs to be more general
+    if 'train' in dset_folder.split('/')[-1]:
         """ Logic to construct softmax with 1 positive doc and num_negative negative docs for every training point"""
     
         label_count = Counter(labels)  # label counter
