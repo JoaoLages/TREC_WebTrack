@@ -68,6 +68,10 @@ def argument_parser(sys_argv):
             aux_dict['train_%d' % (i+1)] = data_config['datasets']['train'][:i]+data_config['datasets']['train'][i+1:]
             aux_dict['dev_%d' % (i+1)] = [dev_file]
 
+            # For TREC qrel file
+            if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
+                model_config['qrel_file_%d' % i] = dev_file
+
         # Replace with aux_dict
         data_config['datasets'] = aux_dict
     else:
@@ -78,11 +82,11 @@ def argument_parser(sys_argv):
         }
         train_combinations = [('train', 'dev')]
 
+        # For TREC qrel file
         if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
-            # For TREC qrel file
             assert len(data_config['datasets']['dev']) == 1, \
                 "Only provide one QREL file for dev"
-            model_config['qrel_file'] = data_config['datasets']['dev'][0]
+            model_config['qrel_file_1'] = data_config['datasets']['dev'][0]
 
     # Pass sim_matrix_config, query_idf_config and num_negative to data_config
     data_config['sim_matrix_config'] = model_config['sim_matrix_config']
@@ -156,6 +160,9 @@ if __name__ == '__main__':
 
         # Reset train logger
         train_logger.reset_logger(train_features.nr_samples)
+
+        # QREL file
+        config['model']['qrel_file'] = config['model']['qrel_file_%d' % i]
 
         # Start epoch training
         for epoch_n in range(config['model']['epochs']):
