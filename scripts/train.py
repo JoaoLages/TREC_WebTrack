@@ -86,7 +86,7 @@ def argument_parser(sys_argv):
         if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
             assert len(data_config['datasets']['dev']) == 1, \
                 "Only provide one QREL file for dev"
-            model_config['qrel_file_1'] = data_config['datasets']['dev'][0]
+            model_config['qrel_file_0'] = data_config['datasets']['dev'][0]
 
     # Pass sim_matrix_config, query_idf_config and num_negative to data_config
     data_config['sim_matrix_config'] = model_config['sim_matrix_config']
@@ -159,15 +159,25 @@ if __name__ == '__main__':
         )
 
         # Reset train logger
-        train_logger.reset_logger(train_features.nr_samples)
+        if 'nr_samples' in config['model']:
+            nr_samples = config['model']['nr_samples']
+        else:
+            # Use all the data every epoch
+            nr_samples = train_features.nr_samples
+        train_logger.reset_logger(nr_samples)
 
         # QREL file
         config['model']['qrel_file'] = config['model']['qrel_file_%d' % i]
 
         # Start epoch training
         for epoch_n in range(config['model']['epochs']):
+            # Shuffle train
+            train_features.shuffle()
+
             # Train
-            for batch in train_features:
+            for count, batch in enumerate(train_features):
+                if count == nr_samples - 1:
+                    break
                 objective = model.update(**batch)
                 train_logger.update_on_batch(objective)
 
