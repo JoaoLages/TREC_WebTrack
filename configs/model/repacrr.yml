@@ -4,8 +4,8 @@ gpu_device: null
 
 metric: ERR20
 
-batch_size: 128
-epochs: 50
+batch_size: 32
+epochs: 100
 
 sim_matrix_config:
   matrices_path: DATA/corpora/cosine/desc_doc_mat
@@ -22,13 +22,14 @@ query_idf_config:
   max_query_len: 16
   idf_vectors_path: DATA/corpora/cosine/query_idf/desc_term_idf/
 
-num_negative: 1
-shuffle: True
+num_negative: 6
+shuffle: False
 filter_size: 32
 top_k: 3
 combine: 32
 plot_model: True
 
+nr_samples: 2048
 construct_vocab: False
 all_features: False
 
