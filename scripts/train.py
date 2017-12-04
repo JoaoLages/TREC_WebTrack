@@ -176,7 +176,7 @@ if __name__ == '__main__':
 
             # Train
             for count, batch in enumerate(train_features):
-                if count == nr_samples - 1:
+                if count == nr_samples/config['model']['batch_size']:
                     break
                 objective = model.update(**batch)
                 train_logger.update_on_batch(objective)
