@@ -127,8 +127,8 @@ class ModelInterface(TemplateModel):
             loss = self.model.update(input, output)
             return {'loss': loss}
 
-    def predict(self, input):
-        probs = self.model.predict(input=input, output=None)
+    def predict(self, input, output=None):
+        probs = self.model.predict(input=input, output=output)
 
         if isinstance(probs, np.ndarray):
             probs = probs.tolist()

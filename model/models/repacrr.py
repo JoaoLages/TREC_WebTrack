@@ -6,6 +6,7 @@ from keras.layers import Permute, Activation, Dense, Flatten, Input, \
 from keras.layers.merge import Concatenate
 from keras.layers.recurrent import LSTM
 from keras.utils import plot_model
+from keras.callbacks import TensorBoard
 from keras import backend
 import os
 import string
@@ -172,6 +173,7 @@ class REPACRR:
         # Build train/predict model later
         self.train_model = None
         self.predict_model = None
+        self.callback = None
 
     def forward(self, r_query_idf, permute_idxs):
         """
@@ -305,6 +307,16 @@ class REPACRR:
 
         return _scorer
 
+    def write_log(self, logs, num_log, names=['loss', 'accuracy']):
+        for name, value in zip(names, logs):
+            summary = tf.Summary()
+            summary_value = summary.value.add()
+            summary_value.simple_value = value
+            summary_value.tag = name
+            self.callback.writer.add_summary(summary, num_log)
+            self.callback.writer.flush()
+        num_log += 1
+
     def _cascade_poses(self):
         '''
         initialize the cascade positions, over which
@@ -386,6 +398,12 @@ class REPACRR:
         self.train_model = Model(inputs=inputs, outputs=[pos_prob])
         self.train_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
+        # Initialize TensorBoard callback
+        self.callback = TensorBoard("%s/logs" % self.output_dir)
+        self.callback.set_model(self.train_model)
+        self.batch_nr = 0
+        self.val_nr = 0
+
         # Initialize loss history
         self.loss_history = []
 
@@ -428,7 +446,14 @@ class REPACRR:
         # Remove meta-data
         input = {key: input[key] for key in input if key != 'meta-data'}
 
-        self.loss_history.append(self.train_model.train_on_batch(input, output['tags'])[0])
+        # Forward + Backprop
+        logs = self.train_model.train_on_batch(input, output['tags'])
+
+        # Write logs to TensorBoard
+        self.write_log(logs, self.batch_nr)
+
+        # FIXME: to remove - Save loss history
+        self.loss_history.append(logs[0])
 
         return self.loss_history[-1]
 
@@ -439,7 +464,7 @@ class REPACRR:
 
         # Check that train model exists
         if self.train_model:
-            # Random file name
+            # Save train weights to temp file and load pred weights from it
             random_fn = ''.join(random.choice(string.ascii_lowercase) for _ in range(7))
 
             # Get weights from train model
@@ -450,6 +475,7 @@ class REPACRR:
         # Remove meta-data
         input = {key: input[key] for key in input if key != 'meta-data'}
 
+        # Get probabilities
         probs = self.predict_model.predict_on_batch(input)
         return probs
 
