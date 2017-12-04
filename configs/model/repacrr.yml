@@ -8,7 +8,9 @@ batch_size: 32
 epochs: 100
 
 sim_matrix_config:
-  matrices_path: DATA/corpora/cosine/desc_doc_mat
+  matrices_path:
+    topic: DATA/corpora/cosine/topic_doc_mat
+    description: DATA/corpora/cosine/desc_doc_mat
   max_doc_len: 800
   max_query_len: 16
   pos_method: firstk
@@ -20,7 +22,9 @@ sim_matrix_config:
 
 query_idf_config:
   max_query_len: 16
-  idf_vectors_path: DATA/corpora/cosine/query_idf/desc_term_idf/
+  idf_vectors_path:
+    topic: DATA/corpora/cosine/query_idf/topic_term_idf/
+    description: DATA/corpora/cosine/query_idf/desc_term_idf/
 
 num_negative: 6
 shuffle: False

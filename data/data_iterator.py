@@ -10,7 +10,7 @@ import multiprocessing as mp
 
 
 def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
-            remove_stopwords, use_description, select_pos_func,
+            remove_stopwords, use_topic, use_description, select_pos_func,
             sim_matrix_config, query_idf_config, embeddings, n_grams):
 
     qids, cwids, labels, ngram_mats, query_idfs = [], [], [], [], []
@@ -26,59 +26,112 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
         query_idf, ngram_mat = None, dict()
         qid, cwid, label = int(qrel[0]), qrel[2], label2tlabel[int(qrel[3])]
 
-        # Get query or its description
-        if use_description:
+        # Get query and/or its description
+        query = ''
+        if use_topic:
             query = query_id2text[qid]['query']
-        else:
-            # Check if description not empty, replace with query if so
-            query = query_id2text[qid]['description']
-            if query == '':
-                query = query_id2text[qid]['query']
+        if use_description:
+            # Check if description not empty, replace with query if so (and if using description only)
+            description = query_id2text[qid]['description']
+            if description == '' and not use_topic:
+                description = query_id2text[qid]['query']
+            query = ' '.join([query, description])
 
         query = preprocess_text(query, tokenize=True, all_lower=True, stopw=remove_stopwords).split()
 
         # Initialize article variable but don't read it yet (might not be needed)
         article = None
 
-        if sim_matrix_config:
-            # Load sim_matrix
-            if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'], qrel[0], qrel[2])):
-                # File exists, load it
-                sim_matrix = np.load('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]))
-            else:
-                # File doesn't exist, create matrix
-                if embeddings is None:
-                    # Cannot create matrix
-                    raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                    'and could not load embeddings to construct it. '
-                                    'Please provide embeddings_path in data config'
-                                    % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]))
+        desc_idx = None
+        aux_s = []
+        if use_topic:
+            aux_s.append('topic')
+        if use_description:
+            aux_s.append('description')
 
-                if article is None:
-                    if corpus_folder is None:
+        if query_idf_config:
+            # Load Query IDF
+            q_idfs = []
+            for x in aux_s:
+                if os.path.isfile('%s/%s.npy' % (query_idf_config['idf_vectors_path'][x], qrel[0])):
+                    # File exists, load it
+                    q_idf = np.load('%s/%s.npy' % (query_idf_config['idf_vectors_path'][x], qrel[0]))
+
+                    if len(q_idf) > query_idf_config['max_query_len']:
+                        raise Exception("Increase max_query_len. %s/%s.npy has %s length" %
+                                        (query_idf_config['idf_vectors_path'][x], qrel[0], len(q_idf)))
+                    else:
+                        q_idf = np.pad(
+                            q_idf,
+                            pad_width=((0, sim_matrix_config['max_query_len'] - len(q_idf))),
+                            mode='constant',
+                            constant_values=0
+                        )
+
+                    if q_idfs:
+                        # when using topic+description
+                        max_len = query_idf_config['max_query_len'] - len(q_idfs[0])
+                        desc_idx = np.sort(np.argsort(q_idf)[::-1][:max_len])
+                        q_idfs.append(q_idf[desc_idx])
+                    else:
+                        q_idfs.append(q_idf)
+                else:
+                    raise Exception("Could not find file for IDF vector under %s/%s.npy. "
+                                    "Please run bin/construct_query_idf_vectors.sh accordingly."
+                                    % (query_idf_config['idf_vectors_path'][x], qrel[0]))
+            query_idf = np.concatenate(q_idfs, axis=0).astype(np.float32)
+
+        if sim_matrix_config:
+            sim_matrices = []
+            for x in aux_s:
+                # Load sim_matrix
+                if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])):
+                    # File exists, load it
+                    sim_matrix = np.load('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
+                else:
+                    # File doesn't exist, create matrix
+                    if embeddings is None:
                         # Cannot create matrix
                         raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                        'and could not load raw text files to construct it. '
-                                        'Please provide corpus_folder in data config'
-                                        % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]))
+                                        'and could not load embeddings to construct it. '
+                                        'Please provide embeddings_path in data config'
+                                        % (sim_matrix_config['matrices_path'[x]], qrel[0], qrel[2]))
 
-                    article = read_file("%s/%s" % (corpus_folder, qrel[2]))
-                    article = [preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()]
+                    if article is None:
+                        if corpus_folder is None:
+                            # Cannot create matrix
+                            raise Exception('Matrix file does not exist under %s/%s/%s.npy '
+                                            'and could not load raw text files to construct it. '
+                                            'Please provide corpus_folder in data config'
+                                            % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
 
-                sim_matrix = build_sim_matrix(query, article[0], embeddings)
-                # Save matrix
-                if not os.path.exists('%s/%s' % (sim_matrix_config['matrices_path'], qrel[0])):
-                    os.makedirs('%s/%s' % (sim_matrix_config['matrices_path'], qrel[0]))
-                np.save(
-                    '%s/%s/%s.npy' % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]),
-                    sim_matrix
-                )
+                        article = read_file("%s/%s" % (corpus_folder, qrel[2]))
+                        article = [preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()]
+
+                    sim_matrix = build_sim_matrix(query, article[0], embeddings)
+                    # Save matrix
+                    if not os.path.exists('%s/%s' % (sim_matrix_config['matrices_path'][x], qrel[0])):
+                        os.makedirs('%s/%s' % (sim_matrix_config['matrices_path'][x], qrel[0]))
+                    np.save(
+                        '%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]),
+                        sim_matrix
+                    )
+                if sim_matrices:
+                    # when using topic+description
+                    assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
+                    sim_matrices.append(sim_matrix[desc_idx])
+                else:
+                    sim_matrices.append(sim_matrix)
+
+            # Join topic/description matrices
+            sim_matrix = np.concatenate(sim_matrices, axis=0)
 
             # Query and doc lengths
             len_doc, len_query = sim_matrix.shape[1], sim_matrix.shape[0]
             for n_gram in n_grams:
                 if len_doc > sim_matrix_config['max_doc_len']:
                     # Document too long -> choose positions to keep
+                    # FIXME: change (0,1) to (0,0) ?
                     rmat = np.pad(
                         sim_matrix,
                         pad_width=((0, sim_matrix_config['max_query_len'] - len_query), (0, 1)),
@@ -115,15 +168,6 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 # Save matrix
                 ngram_mat[n_gram] = rmat
 
-        if query_idf_config:
-            # Load Query IDF
-            if os.path.isfile('%s/%s.npy' % (query_idf_config['idf_vectors_path'], qrel[0])):
-                # File exists, load it
-                query_idf = np.load('%s/%s.npy' % (query_idf_config['idf_vectors_path'], qrel[0]))
-            else:
-                raise Exception("Could not find file for IDF vector under %s/%s.npy. "
-                                "Please run bin/construct_query_idf_vectors.sh accordingly."
-                                % (query_idf_config['idf_vectors_path'], qrel[0]))
         # Save
         qids.append(qid)
         cwids.append(cwid)
@@ -146,7 +190,8 @@ def build_sim_matrix(query, document, embeddings):
     return matrix
 
 
-def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_description=True,
+def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
+                use_topic=True, use_description=True,
                 sim_matrix_config=None, query_idf_config=None, num_negative=1,
                 embeddings_path=None, remove_stopwords=False):
     """
@@ -154,8 +199,13 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
     """
 
     # Assertions
+    assert use_topic or use_description
     if sim_matrix_config:
         assert 'matrices_path' in sim_matrix_config, "Provide path to load/store similarity matrices"
+        if use_topic:
+            assert 'topic' in sim_matrix_config['matrices_path']
+        if use_description:
+            assert 'description' in sim_matrix_config['matrices_path']
         assert 'ngrams' in sim_matrix_config, "Need 'ngrams' when building sim_matrix"
         assert 'max_doc_len' in sim_matrix_config and 'max_query_len' in sim_matrix_config, \
             "'max_doc_len' and 'max_query_len' has to be provided when building sim_matrix"
@@ -171,6 +221,10 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
             "'max_query_len' has to be provided when building query_idf"
         assert 'idf_vectors_path' in query_idf_config, \
             "Need to provide path for IDF query vectors, or run bin/construct_query_idf_vectors.py to build them"
+        if use_topic:
+            assert 'topic' in query_idf_config['idf_vectors_path']
+        if use_description:
+            assert 'description' in query_idf_config['idf_vectors_path']
 
     if sim_matrix_config and query_idf_config:
         assert sim_matrix_config['max_query_len'] == query_idf_config['max_query_len']
@@ -235,8 +289,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
         mp.cpu_count(),
         initializer=process,
         initargs=(q_process_recv, q_process_send, query_id2text, label2tlabel, corpus_folder,
-                  remove_stopwords, use_description, select_pos_func, sim_matrix_config,
-                  query_idf_config, embeddings, n_grams)
+                  remove_stopwords, use_topic, use_description, select_pos_func,
+                  sim_matrix_config, query_idf_config, embeddings, n_grams)
     )
 
     # Send qrels
@@ -479,6 +533,7 @@ class Data(DataTemplate):
                 dset_files,
                 config['topics_files'],
                 config['corpus_folder'],
+                use_topic=config['use_topic'],
                 use_description=config['use_description'],
                 embeddings_path=config['embeddings_path'],
                 sim_matrix_config=config['sim_matrix_config'],

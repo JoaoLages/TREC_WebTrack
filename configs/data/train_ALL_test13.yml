@@ -19,6 +19,7 @@ topics_files:
     - topic_files/trec2013-topics.xml
     - topic_files/trec2014-topics.xml
 
+use_topic: True
 use_description: True
 remove_stopwords: True
 
