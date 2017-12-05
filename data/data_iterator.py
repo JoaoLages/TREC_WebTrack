@@ -26,18 +26,18 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
         query_idf, ngram_mat = None, dict()
         qid, cwid, label = int(qrel[0]), qrel[2], label2tlabel[int(qrel[3])]
 
-        # Get query and/or its description
-        query = ''
+        # Get preprocessed query and/or its description
+        query = {}
         if use_topic:
-            query = query_id2text[qid]['query']
+            query['topic'] = preprocess_text(query_id2text[qid]['query'],
+                                             tokenize=True, all_lower=True, stopw=remove_stopwords).split()
         if use_description:
             # Check if description not empty, replace with query if so (and if using description only)
-            description = query_id2text[qid]['description']
+            description = preprocess_text(query_id2text[qid]['description'],
+                                          tokenize=True, all_lower=True, stopw=remove_stopwords).split()
             if description == '' and not use_topic:
                 description = query_id2text[qid]['query']
-            query = ' '.join([query, description])
-
-        query = preprocess_text(query, tokenize=True, all_lower=True, stopw=remove_stopwords).split()
+            query['description'] = description
 
         # Initialize article variable but don't read it yet (might not be needed)
         article = None
@@ -60,13 +60,6 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     if len(q_idf) > query_idf_config['max_query_len']:
                         raise Exception("Increase max_query_len. %s/%s.npy has %s length" %
                                         (query_idf_config['idf_vectors_path'][x], qrel[0], len(q_idf)))
-                    else:
-                        q_idf = np.pad(
-                            q_idf,
-                            pad_width=((0, sim_matrix_config['max_query_len'] - len(q_idf))),
-                            mode='constant',
-                            constant_values=0
-                        )
 
                     if q_idfs:
                         # when using topic+description
@@ -79,7 +72,16 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     raise Exception("Could not find file for IDF vector under %s/%s.npy. "
                                     "Please run bin/construct_query_idf_vectors.sh accordingly."
                                     % (query_idf_config['idf_vectors_path'][x], qrel[0]))
+
+            # Join topic+description vectors
             query_idf = np.concatenate(q_idfs, axis=0).astype(np.float32)
+            # Pad to max length with zeros
+            query_idf = np.pad(
+                query_idf,
+                pad_width=((0, sim_matrix_config['max_query_len'] - len(query_idf))),
+                mode='constant',
+                constant_values=0
+            )
 
         if sim_matrix_config:
             sim_matrices = []
@@ -95,7 +97,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                         raise Exception('Matrix file does not exist under %s/%s/%s.npy '
                                         'and could not load embeddings to construct it. '
                                         'Please provide embeddings_path in data config'
-                                        % (sim_matrix_config['matrices_path'[x]], qrel[0], qrel[2]))
+                                        % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
 
                     if article is None:
                         if corpus_folder is None:
@@ -106,9 +108,9 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                                             % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
 
                         article = read_file("%s/%s" % (corpus_folder, qrel[2]))
-                        article = [preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()]
+                        article = preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()
 
-                    sim_matrix = build_sim_matrix(query, article[0], embeddings)
+                    sim_matrix = build_sim_matrix(query[x], article, embeddings)
                     # Save matrix
                     if not os.path.exists('%s/%s' % (sim_matrix_config['matrices_path'][x], qrel[0])):
                         os.makedirs('%s/%s' % (sim_matrix_config['matrices_path'][x], qrel[0]))
@@ -119,11 +121,13 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 if sim_matrices:
                     # when using topic+description
                     assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
+
+                    # Append previously selected ids to the matrix
                     sim_matrices.append(sim_matrix[desc_idx])
                 else:
                     sim_matrices.append(sim_matrix)
 
-            # Join topic/description matrices
+            # Join topic+description matrices
             sim_matrix = np.concatenate(sim_matrices, axis=0)
 
             # Query and doc lengths
