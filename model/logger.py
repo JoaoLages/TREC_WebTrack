@@ -21,6 +21,9 @@ def ndcg20_err20(pred, info_dict, model_config):
     # Assertion
     assert 'qids' in info_dict and 'cwids' in info_dict
 
+    assert len(info_dict['qids']) == len(info_dict['cwids']) == len(pred), \
+        "Length mismatch"
+
     # Build qid_cwid_pred
     qid_cwid_pred = defaultdict(dict)
     for qid, cwid, p in zip(info_dict['qids'], info_dict['cwids'], pred):
@@ -82,20 +85,23 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
 
     if 'rerank_files' in model_config:
         # Get all query-document pairs in QREL file
-        q_d_pairs = set(zip(info_dict['qids'], info_dict['cwids']))
+        qid_cwid2pred = {(x, y): z for x, y, z in zip(info_dict['qids'], info_dict['cwids'], predicted_probs)}
 
-        # Build rerank_dict like info_dict
+        # Build rerank_dict like info_dict and new predicted_probs
         rerank_dict = defaultdict(lambda: defaultdict(list))
+        new_probs = defaultdict(list)
         for key in model_config['rerank_files']:
             # Get qids and cwids in common
             lines = read_qrels(model_config['rerank_files'][key])
             for line in lines:
-                if (int(line[0]), line[2]) in q_d_pairs:
+                if (int(line[0]), line[2]) in qid_cwid2pred:
+                    # In common, append prediction
                     rerank_dict[key]['qids'].append(int(line[0]))
                     rerank_dict[key]['cwids'].append(line[2])
+                    new_probs[key].append(qid_cwid2pred[(int(line[0]), line[2])])
 
             # Get NDCG and ERR
-            ndcg20, err20 = ndcg20_err20(predicted_probs, rerank_dict[key], model_config)
+            ndcg20, err20 = ndcg20_err20(new_probs[key], rerank_dict[key], model_config)
 
             # Add scores
             metric_scores.append(ndcg20)

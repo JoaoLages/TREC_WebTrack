@@ -80,7 +80,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 query_idf,
                 pad_width=((0, sim_matrix_config['max_query_len'] - len(query_idf))),
                 mode='constant',
-                constant_values=0
+                constant_values=-np.inf
             )
 
         if sim_matrix_config:
@@ -128,7 +128,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     sim_matrices.append(sim_matrix)
 
             # Join topic+description matrices
-            sim_matrix = np.concatenate(sim_matrices, axis=0)
+            sim_matrix = np.concatenate(sim_matrices, axis=0).astype(np.float32)
 
             # Query and doc lengths
             len_doc, len_query = sim_matrix.shape[1], sim_matrix.shape[0]
@@ -195,9 +195,9 @@ def build_sim_matrix(query, document, embeddings):
 
 
 def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
-                use_topic=True, use_description=True,
-                sim_matrix_config=None, query_idf_config=None, num_negative=1,
-                embeddings_path=None, remove_stopwords=False):
+                use_topic=True, use_description=True, sim_matrix_config=None,
+                query_idf_config=None, num_negative=1, embeddings_path=None,
+                remove_stopwords=False, shuffle_seed=None):
     """
     Reads files needed to build a corpus
     """
@@ -232,6 +232,10 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
 
     if sim_matrix_config and query_idf_config:
         assert sim_matrix_config['max_query_len'] == query_idf_config['max_query_len']
+
+    # Shuffle seed
+    if shuffle_seed:
+        np.random.seed(shuffle_seed)
 
     # Dict to hold dataset
     dset = {
@@ -368,9 +372,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
         qidf_batch = list()
         ys = list()  # holds labels
     
-        # Choose n_batch samples of 1/2 (n_batch is the total number of training samples in here)
-        n_batch = len(labels)
-        selected_labels = np.random.choice([l for l in sorted(sample_label_prob)], size=n_batch, replace=True,
+        # Choose N samples of 1/2 (N is the total number of training samples in here)
+        selected_labels = np.random.choice([l for l in sorted(sample_label_prob)], size=len(labels), replace=True,
                                            p=[sample_label_prob[l] for l in sorted(sample_label_prob)])
         label_counter = Counter(selected_labels)
         for label in label_counter:
@@ -385,7 +388,7 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
     
                 # Check if qid+label has inferior document to pair with (2-1, 1-0)
                 neg_labels = [nl for nl in reversed(range(label)) if nl in qid_label_cwids[qid]]
-                # If it doesnt exist, leave it FIXME: try another qid then to replace it??
+                # If it doesnt exist, leave it
                 if not neg_labels:
                     continue
     
@@ -409,10 +412,10 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                                     pass
                                 ys.append(1)  # positive label
     
-                # Add num_negative randomly picked negative matrices per positive example of that qid to negative batch
-                for neg_ind in range(num_negative):
-                    idx_negs = np.random.choice(list(range(n_neg)), size=qid_counter[qid], replace=True)
-                    if sim_matrix_config:
+                    # Add num_negative randomly picked negative matrices
+                    # per positive example of that qid to negative batch
+                    for neg_ind in range(num_negative):
+                        idx_negs = np.random.choice(list(range(n_neg)), size=qid_counter[qid], replace=True)
                         min_ngram = min(qid_ngram_cwid_mat[qid])
                         for ngram in qid_ngram_cwid_mat[qid]:
                             for ni in idx_negs:
@@ -479,17 +482,18 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                             cwids.append(cwid)
 
         # INPUT
-        dset['input'] = {'doc_ngram_%d' % ngram: np.array(np.array(doc_vec[ngram])) for ngram in doc_vec}
+        if sim_matrix_config:
+            dset['input'] = {'doc_ngram_%d' % ngram: np.array(np.array(doc_vec[ngram])) for ngram in doc_vec}
+            dset['input']['meta-data'] = {
+                'qids': qids,
+                'cwids': cwids
+            }
         if query_idf_config:
             dset['input']['query_idf'] = np.concatenate(q_idfs, axis=0)
         # TODO: Add context
         if sim_matrix_config['use_context']:
             # test_data['doc_context'] = np.array(contexts)
             pass
-        dset['input']['meta-data'] = {
-            'qids': qids,
-            'cwids': cwids
-        }
 
         # OUTPUT
         # NOTE: These labels don't matter in NDCG20/ERR20 as the model will be evaluated
@@ -544,7 +548,8 @@ class Data(DataTemplate):
                 query_idf_config=config['query_idf_config'],
                 num_negative=config['num_negative'],
                 remove_stopwords=config['remove_stopwords'],
-                dset_folder="%s/%s" % (config['config_name'], dset)
+                dset_folder="%s/%s" % (config['config_name'], dset),
+                shuffle_seed=config['shuffle_seed']
             )
             self.nr_samples[dset] = \
                 len(self.datasets[dset]['output']['tags'])
