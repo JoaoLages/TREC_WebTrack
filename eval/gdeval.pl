@@ -9,8 +9,6 @@
 use constant LOGBASEDIV => log(2.0);
 
 # gloals
-my $GZ_OK = `which gzip`;
-my $BZ_OK = `which bzcat`;
 my $QRELS;
 my $VERSION = "version 1.3 (Mon Apr 29 20:50:24 EDT 2013)";
 my $MAX_JUDGMENT = 4; # Maximum gain value allowed in qrels file.
@@ -19,7 +17,7 @@ my $USAGE = "usage: $0 [options] qrels run\n
   options:\n
     -c
         Average over the complete set of topics in the relevance judgments
-        instead of the topics in the intersection of relevance judgments 
+        instead of the topics in the intersection of relevance judgments
         and results.\n
     -k value
         Non-negative integer depth of ranking to evaluate in range [1,inf].
@@ -31,22 +29,7 @@ my $USAGE = "usage: $0 [options] qrels run\n
         evaluation.  A baseline must still be specified.  By default 0.
         The final weight to downside changes in performance is (1+value).\n";
 
-sub zopen {
-    my $fp = shift;
-    my $file = shift;
 
-    if ($file =~ /\.gz/) {
-		die "gzip not found, .gz not supported" unless $GZ_OK;
-        open($$fp, "gzip -dc $file |") or die("Invalid ffile: $file - $!");
-    }
-    elsif ($file =~ /\.bz2/) {
-		die "bzcat not found, .bz2 not supported" unless $GZ_OK;
-        open($$fp, "bzcat $file |") or die("Invalid ffile: $file - $!");
-    }
-    else {
-        open($$fp, $file) or die("Invalid ffile: $file - $!");
-    }
-} 
 
 use strict 'vars';
 
@@ -68,7 +51,7 @@ use strict 'vars';
     elsif ($#ARGV >= 2 and ("-c" eq $ARGV[0]))
     {
       $cflag = 1;
-      shift @ARGV; 
+      shift @ARGV;
     }
     elsif ($#ARGV >= 3 and ("-k" eq $ARGV[0]))
     {
@@ -101,9 +84,8 @@ use strict 'vars';
   # Read qrels file, check format, and sort
   my @qrels = ();
   my %seen = ();
-  my $fq;
-  zopen(\$fq, "$QRELS") || die "$0: cannot open \"$QRELS\": $!\n";
-  while (<$fq>) {
+  open (QRELS,"<$QRELS") || die "$0: cannot open \"$QRELS\": $!\n";
+  while (<QRELS>) {
     s/[\r\n]//g;
     my ($topic, $zero, $docno, $judgment) = split (' ');
     $topic =~ s/^.*\-//;
@@ -116,7 +98,7 @@ use strict 'vars';
       $seen{$topic} = 1;
     }
   }
-  close ($fq);
+  close (QRELS);
   @qrels = sort qrelsOrder (@qrels);
 
   # Process qrels: store judgments and compute ideal gains
@@ -232,7 +214,7 @@ sub riskWeighted
 }
 # compute and report information for current topic
 sub topicDone {
-  my ($printTopic, $runid, $topic, $pndcgTotal, $perrTotal, $ptopics, $pseen, $pideal, 
+  my ($printTopic, $runid, $topic, $pndcgTotal, $perrTotal, $ptopics, $pseen, $pideal,
       $isRiskSensitive, $riskAlpha, $baseNDCG, $baseERR, @gain) = @_;
   my($ndcg, $err) = (0, 0);
   if (exists($$pseen{$topic}) and defined($$pseen{$topic}) and $$pseen{$topic}) {
@@ -256,9 +238,8 @@ sub processRun
   my $runid = "?????";
   my @run = ();
   # Read run rile, check format, and sort
-  my $fr;
-  zopen(\$fr, $run) || die "$0: cannot open \"$run\": $!\n";
-  while (<$fr>) {
+  open (RUN,"<$run") || die "$0: cannot open \"$run\": $!\n";
+  while (<RUN>) {
     s/[\r\n]//g;
     my ($topic, $q0, $docno, $rank, $score);
     ($topic, $q0, $docno, $rank, $score, $runid) = split (' ');
@@ -279,7 +260,7 @@ sub processRun
 
   if ($isRiskSensitive)
   {
-    $runid = sprintf("%s (rel to. %s; rs=1+a; a=%s)",$runid,$baserunname,$riskAlpha);
+    $runid = sprintf("%s (rel to. %s, rs=1+a, a=%s)",$runid,$baserunname,$riskAlpha);
   }
 
   # Process runs: compute measures for each topic and average
@@ -299,7 +280,7 @@ sub processRun
 	  $baseNDCG = $$baseNDCGByTopic{$topicCurrent} if (exists($$baseNDCGByTopic{$topicCurrent}) and defined($$baseNDCGByTopic{$topicCurrent}));
 	  $baseERR = $$baseERRByTopic{$topicCurrent} if (exists($$baseERRByTopic{$topicCurrent}) and defined($$baseERRByTopic{$topicCurrent}));
 	}
-	my ($ndcg,$err) = &topicDone ($printTopics, $runid, $topicCurrent, \$ndcgTotal, \$errTotal, \$topics, 
+	my ($ndcg,$err) = &topicDone ($printTopics, $runid, $topicCurrent, \$ndcgTotal, \$errTotal, \$topics,
 				      $pseen, $pideal, $isRiskSensitive, $riskAlpha, $baseNDCG, $baseERR, @gain);
 	$$ndcgByTopic{$topicCurrent} = $ndcg;
 	$$errByTopic{$topicCurrent} = $err;
@@ -319,7 +300,7 @@ sub processRun
       $baseNDCG = $$baseNDCGByTopic{$topicCurrent} if (exists($$baseNDCGByTopic{$topicCurrent}) and defined($$baseNDCGByTopic{$topicCurrent}));
       $baseERR = $$baseERRByTopic{$topicCurrent} if (exists($$baseERRByTopic{$topicCurrent}) and defined($$baseERRByTopic{$topicCurrent}));
     }
-    my ($ndcg,$err) = &topicDone ($printTopics, $runid, $topicCurrent, \$ndcgTotal, \$errTotal, \$topics, 
+    my ($ndcg,$err) = &topicDone ($printTopics, $runid, $topicCurrent, \$ndcgTotal, \$errTotal, \$topics,
 				  $pseen, $pideal, $isRiskSensitive, $riskAlpha, $baseNDCG, $baseERR, @gain);
     $$ndcgByTopic{$topicCurrent} = $ndcg;
     $$errByTopic{$topicCurrent} = $err;
@@ -339,7 +320,7 @@ sub processRun
 	  next if ($processed{$topicCurrent});
 	  $baseNDCG = $$baseNDCGByTopic{$topicCurrent} if (exists($$baseNDCGByTopic{$topicCurrent}) and defined($$baseNDCGByTopic{$topicCurrent}));
 	  $baseERR = $$baseERRByTopic{$topicCurrent} if (exists($$baseERRByTopic{$topicCurrent}) and defined($$baseERRByTopic{$topicCurrent}));
-	  my ($ndcg,$err) = &topicDone ($printTopics, $runid, $topicCurrent, \$ndcgTotal, \$errTotal, \$topics, 
+	  my ($ndcg,$err) = &topicDone ($printTopics, $runid, $topicCurrent, \$ndcgTotal, \$errTotal, \$topics,
 					$pseen, $pideal, $isRiskSensitive, $riskAlpha, $baseNDCG, $baseERR, @gain);
 	}
       }
@@ -353,7 +334,7 @@ sub processRun
     $errAvg /= $numTopics;
   }
   printf "$runid,amean,%.5f,%.5f\n",$ndcgAvg,$errAvg if ($printTopics);
-  
+
   return ($ndcgByTopic,$errByTopic,$runid);
-  close($fr);
+  close(RUN);
 }
