@@ -99,6 +99,11 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
                     rerank_dict[key]['qids'].append(int(line[0]))
                     rerank_dict[key]['cwids'].append(line[2])
                     new_probs[key].append(qid_cwid2pred[(int(line[0]), line[2])])
+                else:
+                    # Not in common, just add -inf to predictions
+                    rerank_dict[key]['qids'].append(int(line[0]))
+                    rerank_dict[key]['cwids'].append(line[2])
+                    new_probs[key].append(float('-inf'))
 
             # Get NDCG and ERR
             ndcg20, err20 = ndcg20_err20(new_probs[key], rerank_dict[key], model_config)
