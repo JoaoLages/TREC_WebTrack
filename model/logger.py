@@ -1,5 +1,5 @@
 from math import ceil
-from itertools import chain
+from itertools import chain, product
 from collections import defaultdict
 from tqdm import tqdm
 from utils.utils import gdeval, read_qrels
@@ -17,6 +17,94 @@ AVAILABLE_METRICS = {
     'NDCG20',
     'ERR20'
 }
+
+judgments_to_label = {'Nav': 4, 'HRel': 2, 'Rel': 1, 'NRel': 0, 'Junk': -2}
+labels_to_judgement = {4: 'Nav', 2: 'HRel', 1: 'Rel', 0: 'NRel', -2: 'Junk'}
+trec_year_to_judgments = {
+    'wt09': {2: 'HRel', 1: 'Rel', 0: 'NRel'},
+    'wt10': {4: 'Nav', 3: 'HRel', 2: 'HRel', 1: 'Rel', 0: 'NRel', -2: 'Junk'},
+    'wt11': {3: 'Nav', 2: 'HRel', 1: 'Rel', 0: 'NRel', -2: 'Junk'},
+    'wt12': {4: 'Nav', 3: 'HRel', 2: 'HRel', 1: 'Rel', 0: 'NRel', -2: 'Junk'},
+    'wt13': {4: 'Nav', 3: 'HRel', 2: 'HRel', 1: 'Rel', 0: 'NRel', -2: 'Junk'},
+    'wt14': {4: 'Nav', 3: 'HRel', 2: 'HRel', 1: 'Rel', 0: 'NRel', -2: 'Junk'}
+}
+
+
+def trec_qid_to_year(qid):
+    if int(qid) <= 50:
+        return 'wt09'
+    elif int(qid) <= 100:
+        return 'wt10'
+    elif int(qid) <= 150:
+        return 'wt11'
+    elif int(qid) <= 200:
+        return 'wt12'
+    elif int(qid) <= 250:
+        return 'wt13'
+    else:
+        return 'wt14'
+
+
+def create_docpairs(pred, gold, info_dict):
+    # Assertion
+    assert 'qids' in info_dict and 'cwids' in info_dict
+
+    assert len(info_dict['qids']) == len(info_dict['cwids']) == len(pred) == len(gold), \
+        "Length mismatch"
+
+    # Build qid_cwid_labelinvrank
+    qid_cwid_labelinvrank = defaultdict(dict)
+    rank = 1
+    for qid, cwid, g, _ in sorted(zip(info_dict['qids'], info_dict['cwids'], gold, pred),
+                                  key=lambda x: x[3]):
+        qid_cwid_labelinvrank[qid][cwid] = (g, 1/rank)  # (label, invrank)
+        rank += 1
+
+    pkey_docpairs = defaultdict(list)
+    for qid in qid_cwid_labelinvrank:
+        label_cwids = defaultdict(list)
+        year = trec_qid_to_year(qid)
+
+        # Transform label and save cwids in label_cwids
+        for cwid in qid_cwid_labelinvrank[qid]:
+            label = qid_cwid_labelinvrank[qid][cwid][0]
+            jud = trec_year_to_judgments[year][label]
+            label = judgments_to_label[jud]
+            label_cwids[label].append(cwid)
+
+        labels = list(label_cwids.keys())
+        for i in range(len(labels)):
+            for j in range(i + 1, len(labels)):
+                ll, lh = min(labels[i], labels[j]), max(labels[i], labels[j])
+                dls, dhs = label_cwids[ll], label_cwids[lh]
+                pairkey = '%s-%s' % (labels_to_judgement[lh], labels_to_judgement[ll])
+                for dl, dh in product(dls, dhs):
+                    pkey_docpairs[pairkey].append((qid, dl, dh))
+
+    pkey_qidcount = defaultdict(dict)
+    pkey_qid_acc = defaultdict(dict)
+    for pkey in pkey_docpairs:
+        qid_dl_dh = pkey_docpairs[pkey]
+        for qid, dl, dh in qid_dl_dh:
+            if qid not in pkey_qidcount[pkey]:
+                pkey_qidcount[pkey][qid] = [0, 0]  # [correct, total]
+            if qid_cwid_labelinvrank[qid][dl][1] < qid_cwid_labelinvrank[qid][dh][1]:
+                pkey_qidcount[pkey][qid][0] += 1
+            pkey_qidcount[pkey][qid][1] += 1
+
+    for pkey in pkey_qidcount:
+        accs = list()
+        total_all = 0
+        for qid in pkey_qidcount[pkey]:
+            correct, total = pkey_qidcount[pkey][qid]
+            total_all += total
+            acc = correct / total
+            pkey_qid_acc[pkey][qid] = acc
+            accs.append(acc)
+        pkey_qid_acc[pkey][0] = np.mean(accs)
+        pkey_qid_acc[pkey][-1] = total_all
+
+    return pkey_qid_acc
 
 
 def ndcg20_err20(pred, info_dict, model_config, use_invrank=False):

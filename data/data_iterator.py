@@ -11,7 +11,7 @@ import multiprocessing as mp
 
 def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
             remove_stopwords, use_topic, use_description, select_pos_func,
-            sim_matrix_config, query_idf_config, embeddings, n_grams):
+            sim_matrix_config, query_idf_config, embeddings, n_grams, include_spam):
 
     qids, cwids, labels, ngram_mats, query_idfs = [], [], [], [], []
 
@@ -21,6 +21,11 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
         # Check end condition
         if qrel is None:
             break
+
+        # Filter spam
+        if not include_spam:
+            if int(qrel[3]) == -2:
+                continue
 
         # Initialize variables
         query_idf, ngram_mat = None, dict()
@@ -197,7 +202,7 @@ def build_sim_matrix(query, document, embeddings):
 def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                 use_topic=True, use_description=True, sim_matrix_config=None,
                 query_idf_config=None, num_negative=1, embeddings_path=None,
-                remove_stopwords=False, shuffle_seed=None):
+                remove_stopwords=False, include_spam=True, shuffle_seed=None):
     """
     Reads files needed to build a corpus
     """
@@ -298,7 +303,7 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
         initializer=process,
         initargs=(q_process_recv, q_process_send, query_id2text, label2tlabel, corpus_folder,
                   remove_stopwords, use_topic, use_description, select_pos_func,
-                  sim_matrix_config, query_idf_config, embeddings, n_grams)
+                  sim_matrix_config, query_idf_config, embeddings, n_grams, include_spam)
     )
 
     # Send qrels
@@ -537,6 +542,9 @@ class Data(DataTemplate):
             if 'embeddings_path' not in config:
                 config['embeddings_path'] = None
 
+            if 'include_spam' not in config:
+                config['include_spam'] = True
+
             self.datasets[dset] = read_corpus(
                 dset_files,
                 config['topics_files'],
@@ -549,6 +557,7 @@ class Data(DataTemplate):
                 num_negative=config['num_negative'],
                 remove_stopwords=config['remove_stopwords'],
                 dset_folder="%s/%s" % (config['name'], dset),
+                include_spam=config['include_spam'],
                 shuffle_seed=config['shuffle_seed']
             )
             self.nr_samples[dset] = \
