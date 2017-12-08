@@ -315,7 +315,6 @@ class REPACRR:
             summary_value.tag = name
             self.callback.writer.add_summary(summary, num_log)
             self.callback.writer.flush()
-        num_log += 1
 
     def _cascade_poses(self):
         '''
@@ -451,6 +450,7 @@ class REPACRR:
 
         # Write logs to TensorBoard
         self.write_log(logs, self.batch_nr)
+        self.batch_nr += 1
 
         # FIXME: to remove - Save loss history
         self.loss_history.append(logs[0])

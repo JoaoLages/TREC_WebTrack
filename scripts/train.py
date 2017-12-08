@@ -195,4 +195,7 @@ if __name__ == '__main__':
             if train_logger.state == 'save':
                 model.save()
 
+    # Save model evolution
+    train_logger.plot_curve("%s/%s" % (config['model']['name'], config['data']['name']))
+
     print("Model saved under %s" % config['model']['model_folder'])

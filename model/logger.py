@@ -1,12 +1,14 @@
-import time
-import numpy as np
 from math import ceil
 from itertools import chain
 from collections import defaultdict
 from tqdm import tqdm
 from utils.utils import gdeval, read_qrels
+import plotly.plotly as py
+import plotly.graph_objs as go
 import tempfile
 import subprocess
+import time
+import numpy as np
 
 
 AVAILABLE_METRICS = {
@@ -33,7 +35,7 @@ def ndcg20_err20(pred, info_dict, model_config):
         for qid in sorted(info_dict['qids']):
             rank = 1
             for cwid in sorted(qid_cwid_pred[qid], key=lambda x: -qid_cwid_pred[qid][x]):
-                tmpf.write('%d Q0 %s %d %.10e %s\n' % (qid, cwid, rank, qid_cwid_pred[qid][cwid], model_config['name']))
+                tmpf.write('%d Q0 %s %d %.10e %s\n' % (qid, cwid, rank, 1/rank, model_config['name']))
                 rank += 1
         tmpf.flush()
         val_res = subprocess.check_output([gdeval, '-k', '20', model_config['qrel_file'], tmpf.name]).decode('utf-8')
@@ -168,6 +170,8 @@ class TrainLogger():
         self.config = config
         self.state = None
         self.metrics = {m: [] for m in [config['monitoring_metric']] + config['metrics']}
+        self.loss_history = []
+        self.current_loss = None
 
         self.best_monitoring_metric = 0.
         self.epoch = 0
@@ -197,7 +201,8 @@ class TrainLogger():
                 'Epoch %i | Batch %i/%i' %
                 (self.epoch + 1, self.batch_idx, self.n_batches)
             )
-            self.pbar.set_postfix(loss=objective['loss'])
+            self.current_loss = objective['loss']
+            self.pbar.set_postfix(loss=self.current_loss)
             self.pbar.update(self.b_size)
 
     def update_on_epoch(self, predictions, gold, meta_data, model_config):
@@ -233,18 +238,18 @@ class TrainLogger():
                 x for batch in gold for x in flatten_list(batch['tags'])
             ]).astype(int)
 
+        # Get metric scores
         metric_scores, metric_names = \
             get_metric_scores(self.metrics, meta_data, predicted_probs, gold_tags, model_config)
 
-        # Update state
-        self.state = None
+        # Save metrics and loss
         for m_score, m_name in zip(metric_scores, metric_names):
             self.metrics[m_name].append(m_score)
+        self.loss_history.append(self.current_loss)
         self.epoch += 1
 
         color_select = 'red'
-        if self.metrics[self.config['monitoring_metric']][-1] > \
-                self.best_monitoring_metric:
+        if self.metrics[self.config['monitoring_metric']][-1] > self.best_monitoring_metric:
             self.state = 'save'
             self.best_monitoring_metric = self.metrics[self.config['monitoring_metric']][-1]
             self.best_epoch = self.epoch
@@ -271,3 +276,29 @@ class TrainLogger():
         print("Time elapsed: %d seconds" % epoch_time)
 
         self.init_time = time.time()
+
+    def plot_curve(self, file_name):
+        plots = []
+        # Add metrics
+        for metric in self.metrics:
+            plots.append(
+                go.Scatter(
+                    x=list(range(1, len(self.metrics[metric])+1)),
+                    y=self.metrics[metric],
+                    mode='lines+markers',
+                    name='%s (%s at epoch %s)' %
+                         (metric, max(self.metrics[metric]), np.argmax(np.asarray(self.metrics[metric])+1))
+                )
+            )
+        # Add loss
+        plots.append(
+            go.Scatter(
+                x=list(range(1, len(self.loss_history) + 1)),
+                y=self.loss_history,
+                mode='lines+markers',
+                name='Loss (%s at epoch %s)' %
+                     (min(self.loss_history), np.argmax(np.asarray(self.loss_history) + 1))
+            )
+        )
+        layout = go.Layout(title='Loss and metrics evolution')
+        py.image.save_as(go.Figure(data=plots, layout=layout), filename=file_name+'.png')
