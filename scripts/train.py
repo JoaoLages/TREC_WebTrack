@@ -27,7 +27,8 @@ def argument_parser(sys_argv):
     )
     parser.add_argument(
         '--model-folder',
-        help="Will overload model-config's variable",
+        help="Path to save model's outputs",
+        required=True,
         type=str
     )
     parser.add_argument(
@@ -93,8 +94,7 @@ def argument_parser(sys_argv):
     data_config['query_idf_config'] = model_config['query_idf_config']
     data_config['num_negative'] = model_config['num_negative']
 
-    if args.model_folder:
-        model_config['model_folder'] = args.model_folder
+    model_config['model_folder'] = args.model_folder
 
     for metric in args.metrics + [model_config['metric']]:
         assert metric in AVAILABLE_METRICS, \
@@ -196,6 +196,6 @@ if __name__ == '__main__':
                 model.save()
 
     # Save model evolution
-    train_logger.plot_curve("%s/%s" % (config['model']['name'], config['data']['name']))
+    train_logger.plot_curve(config['model']['model_folder'])
 
     print("Model saved under %s" % config['model']['model_folder'])

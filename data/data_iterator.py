@@ -207,9 +207,9 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
     if sim_matrix_config:
         assert 'matrices_path' in sim_matrix_config, "Provide path to load/store similarity matrices"
         if use_topic:
-            assert 'topic' in sim_matrix_config['matrices_path']
+            assert 'topic' in sim_matrix_config['matrices_path'].keys()
         if use_description:
-            assert 'description' in sim_matrix_config['matrices_path']
+            assert 'description' in sim_matrix_config['matrices_path'].keys()
         assert 'ngrams' in sim_matrix_config, "Need 'ngrams' when building sim_matrix"
         assert 'max_doc_len' in sim_matrix_config and 'max_query_len' in sim_matrix_config, \
             "'max_doc_len' and 'max_query_len' has to be provided when building sim_matrix"
@@ -548,7 +548,7 @@ class Data(DataTemplate):
                 query_idf_config=config['query_idf_config'],
                 num_negative=config['num_negative'],
                 remove_stopwords=config['remove_stopwords'],
-                dset_folder="%s/%s" % (config['config_name'], dset),
+                dset_folder="%s/%s" % (config['name'], dset),
                 shuffle_seed=config['shuffle_seed']
             )
             self.nr_samples[dset] = \

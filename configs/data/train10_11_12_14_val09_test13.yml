@@ -1,4 +1,4 @@
-config_name: 'train10_11_12_14_val09_test13'
+name: 'train10_11_12_14_val09_test13'
 
 datasets:
   train:

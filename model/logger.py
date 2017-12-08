@@ -3,7 +3,7 @@ from itertools import chain
 from collections import defaultdict
 from tqdm import tqdm
 from utils.utils import gdeval, read_qrels
-import plotly.plotly as py
+from plotly.offline import plot
 import plotly.graph_objs as go
 import tempfile
 import subprocess
@@ -281,7 +281,7 @@ class TrainLogger():
 
         self.init_time = time.time()
 
-    def plot_curve(self, file_name):
+    def plot_curve(self, path):
         plots = []
         # Add metrics
         for metric in self.metrics:
@@ -291,7 +291,7 @@ class TrainLogger():
                     y=self.metrics[metric],
                     mode='lines+markers',
                     name='%s (%s at epoch %s)' %
-                         (metric, max(self.metrics[metric]), np.argmax(np.asarray(self.metrics[metric])+1))
+                         (metric, max(self.metrics[metric]), np.argmax(np.asarray(self.metrics[metric])) + 1)
                 )
             )
         # Add loss
@@ -301,8 +301,11 @@ class TrainLogger():
                 y=self.loss_history,
                 mode='lines+markers',
                 name='Loss (%s at epoch %s)' %
-                     (min(self.loss_history), np.argmax(np.asarray(self.loss_history) + 1))
+                     (min(self.loss_history), np.argmax(np.asarray(self.loss_history)) + 1)
             )
         )
+        # Save graph in html file
+        filename = "Loss_and_metrics_evolution"
         layout = go.Layout(title='Loss and metrics evolution')
-        py.image.save_as(go.Figure(data=plots, layout=layout), filename=file_name+'.png')
+        _ = plot(go.Figure(data=plots, layout=layout), image='png', image_filename=filename,
+                 filename="%s/%s.html" % (path, filename), show_link=False, auto_open=False)

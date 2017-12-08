@@ -1,4 +1,4 @@
-config_name: 'adhoc_example'
+name: 'adhoc_example'
 
 datasets:
   train:
@@ -14,6 +14,7 @@ topics_files:
     - topic_files/trec2014-topics.xml
 
 use_description: True
+use_topic: False
 remove_stopwords: True
 
 embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
