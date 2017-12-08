@@ -19,7 +19,7 @@ AVAILABLE_METRICS = {
 }
 
 
-def ndcg20_err20(pred, info_dict, model_config):
+def ndcg20_err20(pred, info_dict, model_config, use_invrank=False):
     # Assertion
     assert 'qids' in info_dict and 'cwids' in info_dict
 
@@ -35,7 +35,11 @@ def ndcg20_err20(pred, info_dict, model_config):
         for qid in sorted(info_dict['qids']):
             rank = 1
             for cwid in sorted(qid_cwid_pred[qid], key=lambda x: -qid_cwid_pred[qid][x]):
-                tmpf.write('%d Q0 %s %d %.10e %s\n' % (qid, cwid, rank, 1/rank, model_config['name']))
+                if use_invrank:
+                    score = 1/rank
+                else:
+                    score = qid_cwid_pred[qid][cwid]
+                tmpf.write('%d Q0 %s %d %.10e %s\n' % (qid, cwid, rank, score, model_config['name']))
                 rank += 1
         tmpf.flush()
         val_res = subprocess.check_output([gdeval, '-k', '20', model_config['qrel_file'], tmpf.name]).decode('utf-8')
@@ -108,7 +112,7 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
                     new_probs[key].append(float('-inf'))
 
             # Get NDCG and ERR
-            ndcg20, err20 = ndcg20_err20(new_probs[key], rerank_dict[key], model_config)
+            ndcg20, err20 = ndcg20_err20(new_probs[key], rerank_dict[key], model_config, use_invrank=True)
 
             # Add scores
             metric_scores.append(ndcg20)
