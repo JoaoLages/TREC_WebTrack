@@ -10,7 +10,9 @@ datasets:
     - qrels/new_14.txt
   test:
     - qrels/new_13.txt
+    - rerank_ql_filtered: eval/ql_submissions/ql_trec2013_filtered.txt
     - rerank_ql: eval/ql_submissions/ql_trec2013.txt
+    - rerank_terrier: eval/ql_submissions/ql_trec2013-terrier.txt
 
 topics_files:
     - topic_files/trec2009-topics.xml
@@ -23,6 +25,7 @@ topics_files:
 use_description: True
 use_topic: True
 remove_stopwords: True
+include_spam: False
 
 # embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
 # corpus_folder: DATA/corpora/texts
