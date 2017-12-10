@@ -165,7 +165,7 @@ def f1_score(gold, pred):
     return 2.*precision*recall/(precision+recall)
 
 
-def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_config):
+def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_config, keep_non_overlaps=False):
 
     metric_scores, metric_names = [], []
 
@@ -194,10 +194,11 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
                     rerank_dict[key]['cwids'].append(line[2])
                     new_probs[key].append(qid_cwid2pred[(int(line[0]), line[2])])
                 else:
-                    # Not in common, just add -inf to predictions
-                    rerank_dict[key]['qids'].append(int(line[0]))
-                    rerank_dict[key]['cwids'].append(line[2])
-                    new_probs[key].append(float('-inf'))
+                    if keep_non_overlaps:
+                        # Not in common, just add -inf to predictions
+                        rerank_dict[key]['qids'].append(int(line[0]))
+                        rerank_dict[key]['cwids'].append(line[2])
+                        new_probs[key].append(float('-inf'))
 
             # Get NDCG and ERR
             ndcg20, err20 = ndcg20_err20(new_probs[key], rerank_dict[key], model_config, use_invrank=True)
@@ -389,7 +390,7 @@ class TrainLogger():
                 y=self.loss_history,
                 mode='lines+markers',
                 name='Loss (%s at epoch %s)' %
-                     (min(self.loss_history), np.argmax(np.asarray(self.loss_history)) + 1)
+                     (min(self.loss_history), np.argmin(np.asarray(self.loss_history)) + 1)
             )
         )
         # Save graph in html file
