@@ -7,14 +7,14 @@ datasets:
     - qrels/dev_test.txt
   test:
     - qrels/dev_test.txt
-    - rerank_ql: eval/ql_submissions/ql_trec2014.txt
+    - rerank_ql_filtered: eval/ql_submissions/ql_trec2013-ql_filtered.txt
+    - rerank_ql: eval/ql_submissions/ql_trec2013-ql.txt
+    - rerank_terrier: eval/ql_submissions/ql_trec2013-terrier_dph.txt
 
 topics_files:
     - topic_files/trec2013-topics.xml
     - topic_files/trec2014-topics.xml
 
-use_description: True
-use_topic: False
 remove_stopwords: True
 
 embeddings_path: DATA/embeddings/retrained-w2v-clueweb12

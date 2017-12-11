@@ -26,6 +26,9 @@ query_idf_config:
     topic: DATA/corpora/query_idf/topic
     description: DATA/corpora/query_idf/description
 
+use_description: True
+use_topic: True
+
 permute: True
 num_negative: 6
 filter_size: 32

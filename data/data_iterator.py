@@ -13,7 +13,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
             remove_stopwords, use_topic, use_description, select_pos_func,
             sim_matrix_config, query_idf_config, embeddings, n_grams, include_spam):
 
-    qids, cwids, labels, ngram_mats, query_idfs = [], [], [], [], []
+    qids, cwids, labels, ngram_mats, query_idfs, context_vecs = [], [], [], [], [], []
 
     while True:
         qrel = q_recv.get()
@@ -28,7 +28,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 continue
 
         # Initialize variables
-        query_idf, ngram_mat = None, dict()
+        query_idf, ngram_mat,  context_vec = None, dict(), None
         qid, cwid, label = int(qrel[0]), qrel[2], label2tlabel[int(qrel[3])]
 
         # Get preprocessed query and/or its description
@@ -90,6 +90,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
 
         if sim_matrix_config:
             sim_matrices = []
+            contexts = []
             for x in aux_s:
                 # Load sim_matrix
                 if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])):
@@ -132,8 +133,56 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 else:
                     sim_matrices.append(sim_matrix)
 
-            # Join topic+description matrices
+                # Add context
+                if sim_matrix_config['use_context']:
+                    # Load context vector
+                    if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])):
+                        # File exists, load it
+                        context_vec = np.load('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                    else:
+                        # File doesn't exist, create matrix
+                        if embeddings is None:
+                            # Cannot create matrix
+                            raise Exception('Vector file does not exist under %s/%s/%s.npy '
+                                            'and could not load embeddings to construct it. '
+                                            'Please provide embeddings_path in data config'
+                                            % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                        if article is None:
+                            if corpus_folder is None:
+                                # Cannot create matrix
+                                raise Exception('Matrix file does not exist under %s/%s/%s.npy '
+                                                'and could not load raw text files to construct it. '
+                                                'Please provide corpus_folder in data config'
+                                                % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+
+                            article = read_file("%s/%s" % (corpus_folder, qrel[2]))
+                            article = preprocess_text(article, tokenize=True, all_lower=True,
+                                                      stopw=remove_stopwords).split()
+
+                        # Build context vector
+                        context_vec = build_context_vector(query[x], article, sim_matrix_config['context_window'],
+                                                           embeddings)
+
+                        # Save vector
+                        if not os.path.exists('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0])):
+                            os.makedirs('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0]))
+                        np.save(
+                            '%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]),
+                            context_vec
+                        )
+                    if contexts:
+                        # when using topic+description
+                        assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
+
+                        # Append previously selected ids to the matrix
+                        contexts.append(context_vec[desc_idx])
+                    else:
+                        contexts.append(context_vec)
+
+            # Join topic+description matrices/vectors
             sim_matrix = np.concatenate(sim_matrices, axis=0).astype(np.float32)
+            if sim_matrix_config['use_context']:
+                context_vec = np.concatenate(contexts, axis=0).astype(np.float32)
 
             # Query and doc lengths
             len_doc, len_query = sim_matrix.shape[1], sim_matrix.shape[0]
@@ -152,10 +201,9 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     selected_inds = select_pos_func(sim_matrix, sim_matrix_config['max_doc_len'], n_gram)
                     rmat = rmat[:, selected_inds]
 
-                    # TODO: Add context
+                    # FIXME: Why for only last n_gram??
                     if sim_matrix_config['use_context']:
-                        pass
-                        # qid_context[qid][cwid] = qid_context_raw[cwid][selected_inds]
+                        context_vec = context_vec[selected_inds]
 
                 else:
                     # Just pad document
@@ -167,12 +215,13 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                         constant_values=0
                     ).astype(np.float32)
 
-                    # TODO: Add context
                     if sim_matrix_config['use_context']:
-                        # qid_context[qid][cwid] = np.pad(qid_context_raw[cwid],
-                        #                                pad_width=((0, dim_sim - len_doc),),
-                        #                                mode='constant', constant_values=pad_value)
-                        pass
+                        context_vec = np.pad(
+                            context_vec,
+                            pad_width=((0, sim_matrix_config['max_doc_len'] - len_doc),),
+                            mode='constant',
+                            constant_values=0
+                        )
 
                 # Save matrix
                 ngram_mat[n_gram] = rmat
@@ -183,9 +232,10 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
         labels.append(label)
         ngram_mats.append(ngram_mat)
         query_idfs.append(query_idf)
+        context_vecs.append(context_vec)
 
     # Send info back
-    q_send.put((qids, cwids, labels, ngram_mats, query_idfs))
+    q_send.put((qids, cwids, labels, ngram_mats, query_idfs, context_vecs))
 
 
 def build_sim_matrix(query, document, embeddings):
@@ -197,6 +247,28 @@ def build_sim_matrix(query, document, embeddings):
         for j, w_d in enumerate(document):
             matrix[i][j] = embeddings.similarity(w_q, w_d)
     return matrix
+
+
+def build_context_vector(query, document, context_window, embeddings):
+    """
+    Build context vector
+    """
+
+    # Get query embeddings and average them into a single vector
+    query_vector = list(map(lambda x: embeddings[x], query))
+    query_vector = sum(query_vector) / len(query_vector)
+
+    # Build querysim vector
+    querysim = [embeddings.similarity(query_vector, w_d) for w_d in document]
+
+    context = []
+    for i in querysim:
+        aux_sum = []
+        for j in range(i - context_window, i + context_window + 1):
+            if j >= 0:
+                aux_sum.append(querysim[j])
+        context.append(sum(aux_sum) / (len(aux_sum)))
+    return np.asarray(context)
 
 
 def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
@@ -222,6 +294,9 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
         assert 'use_context' in sim_matrix_config, "Need to provide 'use_context' when building sim_matrix"
         assert sim_matrix_config['pos_method'] == 'firstk' or not sim_matrix_config['use_context'], \
             "context is misaligned if we aren't using firstk"
+        if sim_matrix_config['use_context']:
+            assert 'context_path' in sim_matrix_config, "Need to provide 'context_path' when using context"
+            assert 'context_window' in sim_matrix_config, "Need to provide 'context_window' when using context"
     else:
         raise Exception('sim_matrix_config has to be provided now')
 
@@ -284,6 +359,9 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
 
         qid_ngram_cwid_mat = defaultdict(lambda: defaultdict(dict))  # dict[qid][ngram][cwid] = sim_mat
 
+        if sim_matrix_config['use_context']:
+            qid_cwid_context = defaultdict(dict)
+
         # Function to select positions when document too long
         select_pos_func = eval('select_pos_%s' % sim_matrix_config['pos_method'])
 
@@ -316,7 +394,7 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
 
     # Receive info
     for _ in range(mp.cpu_count()):
-        for qid, cwid, label, ngram_mat, query_idf in zip(*q_process_send.get()):
+        for qid, cwid, label, ngram_mat, query_idf, context_vec in zip(*q_process_send.get()):
             labels.append(label)
             qid_label_cwids[qid][label].append(cwid)
             qid_cwid_label[qid][cwid] = label
@@ -325,22 +403,12 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
             if sim_matrix_config:
                 for ng in ngram_mat:
                     qid_ngram_cwid_mat[qid][ng][cwid] = ngram_mat[ng]
+                if sim_matrix_config['use_context']:
+                    qid_cwid_context[qid][cwid] = context_vec
 
             # Save Query IDF
             if query_idf_config and qid not in query_idfs:
-                len_query = query_idf.shape[0]
-                if len_query > query_idf_config['max_query_len']:
-                    raise Exception(
-                        "Query has length %s, max_query_len set to %s. Increase max_query_len"
-                        % (len_query, query_idf_config['max_query_len']))
-
-                # Pad query with zeros to max length
-                query_idfs[qid] = np.pad(
-                    query_idf,
-                    pad_width=((0, query_idf_config['max_query_len'] - len_query)),
-                    mode='constant',
-                    constant_values=-np.inf
-                )
+                query_idfs[qid] = query_idf
 
     # Close pool
     pool.close()
@@ -411,10 +479,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                             p_cwid = pos_cwids[pi]
                             pos_batch[ngram].append(qid_ngram_cwid_mat[qid][ngram][p_cwid])
                             if ngram == min_ngram:
-                                # TODO: Add context
                                 if sim_matrix_config['use_context']:
-                                    # pos_context_batch.append(qid_context[qid][p_cwid])
-                                    pass
+                                    pos_context_batch.append(qid_cwid_context[qid][p_cwid])
                                 ys.append(1)  # positive label
     
                     # Add num_negative randomly picked negative matrices
@@ -426,11 +492,9 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                             for ni in idx_negs:
                                 n_cwid = neg_cwids[ni]
                                 neg_batch[ngram][neg_ind].append(qid_ngram_cwid_mat[qid][ngram][n_cwid])
-                                # TODO: Add context
                                 if ngram == min_ngram and sim_matrix_config['use_context']:
-                                    # neg_context_batch[neg_ind].append(qid_context[qid][n_cwid])
-                                    pass
-    
+                                    neg_context_batch[neg_ind].append(qid_cwid_context[qid][n_cwid])
+
                 # Add Query IDF to its batch
                 if query_idf_config:
                     qidf_batch.append(
@@ -445,13 +509,11 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                     dset['input']['neg%d_ngram_%d' % (neg_ind, ngram)] = \
                         np.array(np.array(neg_batch[ngram][neg_ind]))
     
-            # TODO: Add context
             if sim_matrix_config['use_context']:
-                # train_data['pos_context'] = np.array(pos_context_batch)[shuffled_index]
-                # for neg_ind in range(num_negative):
-                #    train_data['neg%d_context' % neg_ind] = np.array(neg_context_batch[neg_ind])[shuffled_index]
-                pass
-    
+                dset['input']['pos_context'] = np.array(pos_context_batch)
+                for neg_ind in range(num_negative):
+                    dset['input']['neg%d_context' % neg_ind] = np.array(neg_context_batch[neg_ind])
+
         if query_idf_config:
             dset['input']['query_idf'] = np.concatenate(qidf_batch, axis=0)
 
@@ -474,10 +536,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                             if query_idf_config:
                                 q_idfs.append(query_idfs[qid].reshape((1, query_idfs[qid].shape[0], 1)))
 
-                            # TODO: Add context
                             if sim_matrix_config['use_context']:
-                                # contexts.append(qid_context[qid][cwid])
-                                pass
+                                contexts.append(qid_cwid_context[qid][cwid])
 
                             # Add label in last iteration
                             ys.append(qid_cwid_label[qid][cwid])
@@ -493,12 +553,11 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
                 'qids': qids,
                 'cwids': cwids
             }
+            if sim_matrix_config['use_context']:
+                dset['input']['doc_context'] = np.array(contexts)
+
         if query_idf_config:
             dset['input']['query_idf'] = np.concatenate(q_idfs, axis=0)
-        # TODO: Add context
-        if sim_matrix_config['use_context']:
-            # test_data['doc_context'] = np.array(contexts)
-            pass
 
         # OUTPUT
         # NOTE: These labels don't matter in NDCG20/ERR20 as the model will be evaluated

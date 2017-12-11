@@ -89,10 +89,12 @@ def argument_parser(sys_argv):
                 "Only provide one QREL file for dev"
             model_config['qrel_file_0'] = data_config['datasets']['dev'][0]
 
-    # Pass sim_matrix_config, query_idf_config and num_negative to data_config
+    # Pass some keys of model_config to data_config
     data_config['sim_matrix_config'] = model_config['sim_matrix_config']
     data_config['query_idf_config'] = model_config['query_idf_config']
     data_config['num_negative'] = model_config['num_negative']
+    data_config['use_description'] = model_config['use_description']
+    data_config['use_topic'] = model_config['use_topic']
 
     model_config['model_folder'] = args.model_folder
 
