@@ -311,15 +311,16 @@ class REPACRR:
         is equivalent to max-pool over the whole document
         '''
         doc_poses = list()
-        pos_arg = str(self.p['cascade'])
-        if len(pos_arg) > 0:
-            poses = pos_arg.split('.')
-            for p in poses:
-                if len(p) > 0:
-                    p = int(p)
-                    if p <= 0 or p > 100:
-                        raise ValueError("Cascade positions are outside (0,100]: %s" % pos_arg)
-            doc_poses.extend([int((int(p) / 100) * self.p['max_doc_len']) for p in poses if len(p) > 0])
+        if self.p['cascade']:
+            pos_arg = str(self.p['cascade'])
+            if len(pos_arg) > 0:
+                poses = pos_arg.split('.')
+                for p in poses:
+                    if len(p) > 0:
+                        p = int(p)
+                        if p <= 0 or p > 100:
+                            raise ValueError("Cascade positions are outside (0,100]: %s" % pos_arg)
+                doc_poses.extend([int((int(p) / 100) * self.p['max_doc_len']) for p in poses if len(p) > 0])
 
         if self.p['max_doc_len'] not in doc_poses:
             doc_poses.append(self.p['max_doc_len'])
