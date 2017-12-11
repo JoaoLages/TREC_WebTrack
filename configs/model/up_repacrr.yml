@@ -26,13 +26,15 @@ query_idf_config:
     topic: DATA/corpora/query_idf/topic
     description: DATA/corpora/query_idf/description
 
+permute: True
 num_negative: 6
-shuffle: False
 filter_size: 32
 top_k: 3
-combine: 32
+combine: 16
+
+xfilters: null
+cascade: 25.50.75.100
+
 plot_model: True
 
 construct_vocab: False
-all_features: False
-

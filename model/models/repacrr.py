@@ -66,11 +66,6 @@ def add_ngram_nfilter(ngram_filter, ngrams):
     add_2dfilters(ngram_filter, filters2add)
 
 
-def add_proximity_filters(ngram_filter, proximity=0, len_query=16):
-    if proximity > 0:
-        add_2dfilters(ngram_filter, [(len_query, proximity)])
-
-
 def parse_more_filter(ngram_filter, more_filters):
     '''
     convert the input string to a list of 2d filter sizes in form of tuple.
@@ -90,18 +85,16 @@ def parse_more_filter(ngram_filter, more_filters):
     add_2dfilters(ngram_filter=ngram_filter, filters2add=filters2add)
 
 
-def get_ngram_nfilter(ngrams, proximity, len_query, more_filter_str):
+def get_ngram_nfilter(ngrams, len_query, more_filter_str):
     # Build dictionary
     ngram_filter = dict()
 
     # Main N-Gram filter
     add_ngram_nfilter(ngram_filter, ngrams)
 
-    # Proximity filter
-    add_proximity_filters(ngram_filter, proximity=proximity, len_query=len_query)
-
     # Extra filters
-    parse_more_filter(ngram_filter, more_filter_str)
+    if more_filter_str:
+        parse_more_filter(ngram_filter, more_filter_str)
 
     return ngram_filter
 
@@ -129,30 +122,23 @@ class REPACRR:
             'pos_method': config['sim_matrix_config']['pos_method'],  # similarity matrix distillation method
             'use_context': config['sim_matrix_config']['use_context'],  # include match contexts? (boolean)
 
+            'permute': config['permute'],  # permute the input to the classification head
             'num_negative': config['num_negative'],  # number of non-relevant docs in softmax
-            'shuffle': config['shuffle'],  # 'permute',
-            # shuffle input to the combination layer? (i.e., LSTM or feedforward layer)
             'filter_size': config['filter_size'],  # number of filters to use for the n-gram convolutions
             'top_k': config['top_k'],  # Get top_k after maxpooling to add to scores
             'combine': config['combine'],  # type of combination layer to use. 0 for an LSTM,
             # otherwise the number of feedforward layer dimensions
 
-            # TODO:??
-            'qproximity': 0,  # additional NxN proximity filter to include (0 to disable)
-            'ek': 10,  # topk expansion terms to use when enhance=qexpand or enhance=both
-
             # configure the sizes of extra filters with format: axb.cxd.<more>
             # for example: 1x100.3x1:> [(1,100), (3,1)]
-            # to turn off, set to an empty string
-            'xfilters': "",
+            'xfilters': config['xfilters'],
 
             # configure the cascade mode of the max-pooling
             # Namely, pool over [first10, first20, ..., first100, wholedoc]
             # instead of only pool on complete document
             # the input is a list of relative positions for pooling
             # for example, 25.50.75.100:> [25,50,75,100] on a doc with length 100
-            # to turn off, set to an empty string
-            'cascade': "",
+            'cascade': config['cascade'],
 
             # To save for data config when loading model
             'sim_matrix_config': config['sim_matrix_config'],
@@ -162,9 +148,9 @@ class REPACRR:
         # Model folder
         self.output_dir = config['model_folder']
 
-        # {1: [(1, 1)], 2: [(2, 2)], 3: [(3, 3)]}
+        # Get kernel sizes for convolutions
         self.ngram_filter = get_ngram_nfilter(
-            self.p['ngrams'], self.p['qproximity'], self.p['max_query_len'], self.p['xfilters']
+            self.p['ngrams'], self.p['max_query_len'], self.p['xfilters']
         )
 
         # Metric
@@ -356,7 +342,7 @@ class REPACRR:
     def build_train(self):
         # Build train model
         r_query_idf = Input(shape=(self.p['max_query_len'], 1), name='query_idf')
-        if self.p['shuffle']:
+        if self.p['permute']:
             permute_input = Input(shape=(self.p['max_query_len'], 2), name='permute', dtype='int32')
         else:
             permute_input = None
@@ -390,7 +376,7 @@ class REPACRR:
         pos_input_list = [pos_inputs[name] for name in pos_inputs]
         neg_input_list = [neg_inputs[neg_ind][ng] for neg_ind in neg_inputs for ng in neg_inputs[neg_ind]]
         inputs = pos_input_list + neg_input_list + [r_query_idf]
-        if self.p['shuffle']:
+        if self.p['permute']:
             inputs.append(permute_input)
 
         # Compile model
@@ -427,7 +413,7 @@ class REPACRR:
         self.predict_model = Model(inputs=doc_input_list + [r_query_idf], outputs=[doc_score])
 
     def get_features(self, input, output):
-        if self.p['shuffle']:
+        if self.p['permute']:
             # Add permute
             input['permute'] = np.array(
                 [[(bi, qi)
