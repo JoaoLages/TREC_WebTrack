@@ -182,16 +182,6 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                         '%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]),
                         context_vec
                     )
-                if contexts:
-                    # when using topic+description
-                    assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
-
-                    # Append previously selected ids to the matrix
-                    contexts.append(context_vec[desc_idx])
-                else:
-                    contexts.append(context_vec)
-
-            context_vec = np.concatenate(contexts, axis=0).astype(np.float32)
 
             # Query and doc lengths
             len_doc, len_query = sim_matrix.shape[1], sim_matrix.shape[0]
@@ -312,6 +302,12 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
         if sim_matrix_config['use_context']:
             assert 'context_path' in sim_matrix_config, "Need to provide 'context_path' when using context"
             assert 'context_window' in sim_matrix_config, "Need to provide 'context_window' when using context"
+            if use_topic and use_description:
+                assert 'topic_description' in sim_matrix_config['context_path'].keys()
+            elif use_topic:
+                assert 'topic' in sim_matrix_config['context_path'].keys()
+            elif use_description:
+                assert 'description' in sim_matrix_config['context_path'].keys()
     else:
         raise Exception('sim_matrix_config has to be provided now')
 

@@ -15,6 +15,8 @@ sim_matrix_config:
   max_query_len: 16
   pos_method: firstk
   use_context: True
+  context_path:
+    topic_description: DATA/corpora/cosine/topic_desc_context  # FIXME: To change
   ngrams:  # query_window_size x doc_windows_size (square only allowed)
     - 1
     - 2
