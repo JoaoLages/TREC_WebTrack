@@ -29,6 +29,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 continue
 
         # Initialize variables
+        exception = None
         query_idf, ngram_mat,  context_vec = None, dict(), None
         qid, cwid, label = int(qrel[0]), qrel[2], label2tlabel[int(qrel[3])]
 
@@ -64,8 +65,11 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     q_idf = np.load('%s/%s.npy' % (query_idf_config['idf_vectors_path'][x], qrel[0]))
 
                     if len(q_idf) > query_idf_config['max_query_len']:
-                        raise Exception("Increase max_query_len. %s/%s.npy has %s length" %
-                                        (query_idf_config['idf_vectors_path'][x], qrel[0], len(q_idf)))
+                        # Send exception to main process
+                        exception = "Increase max_query_len. %s/%s.npy has %s length" % \
+                                    (query_idf_config['idf_vectors_path'][x], qrel[0], len(q_idf))
+                        q_send.put([exception], [None], [None], [None], [None])
+                        break
 
                     if q_idfs:
                         # when using topic+description
@@ -75,9 +79,12 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     else:
                         q_idfs.append(q_idf)
                 else:
-                    raise Exception("Could not find file for IDF vector under %s/%s.npy. "
-                                    "Please run bin/construct_query_idf_vectors.sh accordingly."
-                                    % (query_idf_config['idf_vectors_path'][x], qrel[0]))
+                    # Send exception to main process
+                    exception = "Could not find file for IDF vector under %s/%s.npy. " \
+                                "Please run bin/construct_query_idf_vectors.sh accordingly."\
+                                % (query_idf_config['idf_vectors_path'][x], qrel[0])
+                    q_send.put([exception], [None], [None], [None], [None])
+                    break
 
             # Join topic+description vectors
             query_idf = np.concatenate(q_idfs, axis=0).astype(np.float32)
@@ -100,19 +107,23 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 else:
                     # File doesn't exist, create matrix
                     if embeddings is None:
-                        # Cannot create matrix
-                        raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                        'and could not load embeddings to construct it. '
-                                        'Please provide embeddings_path in data config'
-                                        % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
+                        # Send exception to main process
+                        exception = 'Matrix file does not exist under %s/%s/%s.npy ' \
+                                    'and could not load embeddings to construct it. ' \
+                                    'Please provide embeddings_path in data config' \
+                                    % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])
+                        q_send.put([exception], [None], [None], [None], [None])
+                        break
 
                     if article is None:
                         if corpus_folder is None:
-                            # Cannot create matrix
-                            raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                            'and could not load raw text files to construct it. '
-                                            'Please provide corpus_folder in data config'
-                                            % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
+                            # Send exception to main process
+                            exception = 'Matrix file does not exist under %s/%s/%s.npy ' \
+                                        'and could not load raw text files to construct it. ' \
+                                        'Please provide corpus_folder in data config'\
+                                        % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])
+                            q_send.put([exception], [None], [None], [None], [None])
+                            break
 
                         article = read_file("%s/%s" % (corpus_folder, qrel[2]))
                         article = preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()
@@ -134,6 +145,10 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 else:
                     sim_matrices.append(sim_matrix)
 
+            # Leave main loop if Exception occurred
+            if exception:
+                break
+
             # Join topic+description matrices/vectors
             sim_matrix = np.concatenate(sim_matrices, axis=0).astype(np.float32)
 
@@ -147,18 +162,23 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 else:
                     # File doesn't exist, create matrix
                     if embeddings is None:
-                        # Cannot create matrix
-                        raise Exception('Vector file does not exist under %s/%s/%s.npy '
-                                        'and could not load embeddings to construct it. '
-                                        'Please provide embeddings_path in data config'
-                                        % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                        # Send exception to main process
+                        exception = 'Vector file does not exist under %s/%s/%s.npy ' \
+                                    'and could not load embeddings to construct it. ' \
+                                    'Please provide embeddings_path in data config'\
+                                    % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])
+                        q_send.put([exception], [None], [None], [None], [None])
+                        break
+
                     if article is None:
                         if corpus_folder is None:
-                            # Cannot create matrix
-                            raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                            'and could not load raw text files to construct it. '
-                                            'Please provide corpus_folder in data config'
-                                            % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                            # Send exception to main process
+                            exception = 'Vector file does not exist under %s/%s/%s.npy ' \
+                                        'and could not load raw text files to construct it. ' \
+                                        'Please provide corpus_folder in data config' \
+                                        % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])
+                            q_send.put([exception], [None], [None], [None], [None])
+                            break
 
                         article = read_file("%s/%s" % (corpus_folder, qrel[2]))
                         article = preprocess_text(article, tokenize=True, all_lower=True,
@@ -410,6 +430,10 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
     # Receive info
     for _ in range(mp.cpu_count()):
         for qid, cwid, label, ngram_mat, query_idf, context_vec in zip(*q_process_send.get()):
+            # Check for exceptions
+            if cwid is None:
+                raise Exception(qid)  # Exception comes in the qid variable
+
             labels.append(label)
             qid_label_cwids[qid][label].append(cwid)
             qid_cwid_label[qid][cwid] = label
