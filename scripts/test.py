@@ -121,10 +121,12 @@ if __name__ == '__main__':
     # Get parameters
     model_parameters = model.get('p')
 
-    # Pass sim_matrix_config, query_idf_config and num_negative to data_config
+    # Pass some keys of model_config to data_config
     data_config['sim_matrix_config'] = model_parameters['sim_matrix_config']
     data_config['query_idf_config'] = model_parameters['query_idf_config']
     data_config['num_negative'] = model_parameters['num_negative']
+    data_config['use_description'] = model_parameters['use_description']
+    data_config['use_topic'] = model_parameters['use_topic']
 
     # Load data
     data = Data(config=data_config)
