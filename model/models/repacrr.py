@@ -142,7 +142,9 @@ class REPACRR:
 
             # To save for data config when loading model
             'sim_matrix_config': config['sim_matrix_config'],
-            'query_idf_config': config['query_idf_config']
+            'query_idf_config': config['query_idf_config'],
+            'use_topic': config['use_topic'],
+            'use_description': config['use_description']
         }
 
         # Model folder
