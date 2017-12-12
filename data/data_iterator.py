@@ -3,6 +3,7 @@ from data.template import Data as DataTemplate, DataIterator
 from data.pos_methods import *
 from utils.utils import read_file, read_query, read_qrels, split_in_sentences, preprocess_text, EMPTY_TOKEN
 from gensim.models import Word2Vec
+from gensim.matutils import unitvec
 from collections import defaultdict, Counter
 from tqdm import tqdm
 import numpy as np
@@ -133,56 +134,64 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 else:
                     sim_matrices.append(sim_matrix)
 
-                # Add context
-                if sim_matrix_config['use_context']:
-                    # Load context vector
-                    if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])):
-                        # File exists, load it
-                        context_vec = np.load('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
-                    else:
-                        # File doesn't exist, create matrix
-                        if embeddings is None:
-                            # Cannot create matrix
-                            raise Exception('Vector file does not exist under %s/%s/%s.npy '
-                                            'and could not load embeddings to construct it. '
-                                            'Please provide embeddings_path in data config'
-                                            % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
-                        if article is None:
-                            if corpus_folder is None:
-                                # Cannot create matrix
-                                raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                                'and could not load raw text files to construct it. '
-                                                'Please provide corpus_folder in data config'
-                                                % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
-
-                            article = read_file("%s/%s" % (corpus_folder, qrel[2]))
-                            article = preprocess_text(article, tokenize=True, all_lower=True,
-                                                      stopw=remove_stopwords).split()
-
-                        # Build context vector
-                        context_vec = build_context_vector(query[x], article, sim_matrix_config['context_window'],
-                                                           embeddings)
-
-                        # Save vector
-                        if not os.path.exists('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0])):
-                            os.makedirs('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0]))
-                        np.save(
-                            '%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]),
-                            context_vec
-                        )
-                    if contexts:
-                        # when using topic+description
-                        assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
-
-                        # Append previously selected ids to the matrix
-                        contexts.append(context_vec[desc_idx])
-                    else:
-                        contexts.append(context_vec)
-
             # Join topic+description matrices/vectors
             sim_matrix = np.concatenate(sim_matrices, axis=0).astype(np.float32)
+
+            # Add context
             if sim_matrix_config['use_context']:
-                context_vec = np.concatenate(contexts, axis=0).astype(np.float32)
+                x = '_'.join(aux_s)
+                # Load context vector
+                if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])):
+                    # File exists, load it
+                    context_vec = np.load('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                else:
+                    # File doesn't exist, create matrix
+                    if embeddings is None:
+                        # Cannot create matrix
+                        raise Exception('Vector file does not exist under %s/%s/%s.npy '
+                                        'and could not load embeddings to construct it. '
+                                        'Please provide embeddings_path in data config'
+                                        % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                    if article is None:
+                        if corpus_folder is None:
+                            # Cannot create matrix
+                            raise Exception('Matrix file does not exist under %s/%s/%s.npy '
+                                            'and could not load raw text files to construct it. '
+                                            'Please provide corpus_folder in data config'
+                                            % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+
+                        article = read_file("%s/%s" % (corpus_folder, qrel[2]))
+                        article = preprocess_text(article, tokenize=True, all_lower=True,
+                                                  stopw=remove_stopwords).split()
+
+                    # Build context vector
+                    if len(aux_s) > 1:
+                        # Join topic + description terms
+                        terms = []
+                        for k in aux_s:
+                            terms += query[k]
+                    else:
+                        terms = query[x]
+                    context_vec = build_context_vector(terms, article, sim_matrix_config['context_window'],
+                                                       embeddings)
+
+                    # Save vector
+                    if not os.path.exists('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0])):
+                        os.makedirs('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0]))
+                    np.save(
+                        '%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]),
+                        context_vec
+                    )
+                if contexts:
+                    # when using topic+description
+                    assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
+
+                    # Append previously selected ids to the matrix
+                    contexts.append(context_vec[desc_idx])
+                else:
+                    contexts.append(context_vec)
+
+            context_vec = np.concatenate(contexts, axis=0).astype(np.float32)
 
             # Query and doc lengths
             len_doc, len_query = sim_matrix.shape[1], sim_matrix.shape[0]
@@ -254,20 +263,26 @@ def build_context_vector(query, document, context_window, embeddings):
     Build context vector
     """
 
-    # Get query embeddings and average them into a single vector
+    # Get query embeddings and average them into a single unit vector
     query_vector = list(map(lambda x: embeddings[x], query))
-    query_vector = sum(query_vector) / len(query_vector)
-
-    # Build querysim vector
-    querysim = [embeddings.similarity(query_vector, w_d) for w_d in document]
+    query_vector = unitvec(np.mean(query_vector, axis=0))
 
     context = []
-    for i in querysim:
-        aux_sum = []
-        for j in range(i - context_window, i + context_window + 1):
-            if j >= 0:
-                aux_sum.append(querysim[j])
-        context.append(sum(aux_sum) / (len(aux_sum)))
+    for i in range(len(document)):
+        begin = i - context_window
+        if begin < 0:
+            begin = 0
+
+        end = i + context_window + 1
+        if end > len(document):
+            end = len(document)
+
+        # Build doc vector
+        doc_vector = list(map(lambda x: embeddings[x], document[begin:end]))
+        doc_vector = unitvec(np.mean(doc_vector, axis=0))
+
+        # Append context
+        context.append(np.dot(query_vector, doc_vector))
     return np.asarray(context)
 
 
