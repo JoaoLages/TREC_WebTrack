@@ -225,6 +225,10 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                 # Save matrix
                 ngram_mat[n_gram] = rmat
 
+            if sim_matrix_config['use_context']:
+                # hack so that we have the same shape as the sim matrices
+                context_vec = np.array([context_vec for _ in sim_matrix_config['max_query_len']], dtype=np.float32)
+
         # Save
         qids.append(qid)
         cwids.append(cwid)
@@ -273,7 +277,7 @@ def build_context_vector(query, document, context_window, embeddings):
 
         # Append context
         context.append(np.dot(query_vector, doc_vector))
-    return np.asarray(context)
+    return np.array(context)
 
 
 def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
