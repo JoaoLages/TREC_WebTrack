@@ -7,7 +7,7 @@ from keras.layers.merge import Concatenate
 from keras.layers.recurrent import LSTM
 from keras.utils import plot_model
 from keras.callbacks import TensorBoard
-from keras import backend
+from keras import backend, regularizers
 import os
 import string
 import random
@@ -129,6 +129,10 @@ class REPACRR:
             'combine': config['combine'],  # type of combination layer to use. 0 for an LSTM,
             # otherwise the number of feedforward layer dimensions
 
+            # Regularizers
+            'l2_lambda': config['l2_lambda'],
+            'keep_prob': config['keep_prob'],
+
             # configure the sizes of extra filters with format: axb.cxd.<more>
             # for example: 1x100.3x1:> [(1,100), (3,1)]
             'xfilters': config['xfilters'],
@@ -197,7 +201,8 @@ class REPACRR:
             # 2D Convolution Layer
             conv_layers[dim_name] = Conv2D(
                 self.p['filter_size'], kernel_size=(n_query, n_doc), strides=(1, subsample_docdim), padding="same",
-                name='conv_%s' % dim_name, activation='relu', weights=None
+                name='conv_%s' % dim_name, activation='relu', kernel_initializer='he_uniform',
+                kernel_regularizer=regularizers.l2(self.p['l2_lambda'])
             )
 
             # MaxPooling Layer
@@ -238,8 +243,10 @@ class REPACRR:
         else:
             # FF Dense Layers
             dout = Dense(1, name='dense_output')
-            d1 = Dense(self.p['combine'], activation='relu', name='dense_1')
-            d2 = Dense(self.p['combine'], activation='relu', name='dense_2')
+            d1 = Dense(self.p['combine'], activation='relu', kernel_initializer='he_uniform',
+                       kernel_regularizer=regularizers.l2(self.p['l2_lambda']), name='dense_1')
+            d2 = Dense(self.p['combine'], activation='relu', kernel_initializer='he_uniform',
+                       kernel_regularizer=regularizers.l2(self.p['l2_lambda']), name='dense_2')
             rnn_layer = lambda x: dout(d1(d2(Flatten()(x))))
 
         def _permute_scores(inputs):
