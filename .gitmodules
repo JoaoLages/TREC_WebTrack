@@ -1,6 +1,3 @@
 [submodule "warc"]
 	path = warc
 	url = https://github.com/RominYue/warc
-[submodule "python-boilerpipe"]
-	path = python-boilerpipe
-	url = https://github.com/misja/python-boilerpipe.git

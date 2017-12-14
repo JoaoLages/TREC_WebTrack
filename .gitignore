@@ -1,3 +1,5 @@
+.gitignore
+.gitmodules
 venv/
 *.egg-info/
 .idea/
