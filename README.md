@@ -4,7 +4,7 @@ This is a repository used to employ Machine Learning models on the adhoc task of
 Since the cost of computing the relevance score for every query-document pair is too high, the method used to evaluate the models is to rerank the QL submissions of each year, that you can find [here](https://github.com/trec-web/trec-web-2014/tree/master/data/runs/baselines).
 
 **This repo is still under development. Any issues, PRs or suggestions will be welcome.**
-It currently only has an implementation of the model described in:
+It currently has implemented both models described in:
 
 Kai Hui, Andrew Yates, Klaus Berberich, Gerard de Melo.
 [PACRR: A Position-Aware Neural IR Model for Relevance Matching](https://arxiv.org/pdf/1704.03940.pdf).
@@ -34,10 +34,9 @@ Its implementation was adapted from the [official release](https://github.com/kh
 
 From now on, it depends if you want to only reproduce REPACRR results or to run your own version of the model.
 
-## Reproduce REPACRR results
-For now, it is only possible to reproduce 2013 results (**and they still have to be optimized**).
-Throughout the instructions, replace `*` with the year you want to use for validation (09, 10, 11, 12 or 14) and 
-`gpu_device` with the CUDA_ID you want to run with (replace with `None` for running on CPU).
+## Reproduce PACRR results
+For now, I only provide scripts to  reproduce 2013 results. However, you can change the bash and config files accordingly to run on other configurations.
+Throughout the instructions, replace `gpu_device` with the CUDA_ID you want to run with (replace with `None` for running on CPU).
 
 Under your `DATA` directory, download the official [similarity matrices](https://drive.google.com/file/d/0B3FrsWe6Y5YqdEtfSjI4N0h1LXM/view?usp=sharing), provided by the authors, and extract them using:
 
@@ -46,17 +45,22 @@ Under your `DATA` directory, download the official [similarity matrices](https:/
 
 Since the similarity matrices are not complete, I constructed new qrel files to be able to work with them 'properly' under `qrels/new_*`.
 
-Now you can either **train and test** or **test only** the REPACRR model.
-* For **test only**, you'll need to download my [weights files](https://drive.google.com/file/d/1g7xkoZ5cZgKWNyhxkN0CbZASaUPumA0G/view?usp=sharing) and extract them under DATA.
+Now you can either **train and test** or **test only** the PACRR model.
+* For **test only**, you'll need to download my [weights files](https://drive.google.com/file/d/15Q3lvUWNZk8n0_vRUp3MPWaRS6tbKadR/view?usp=sharing) and extract them under DATA.
     
       cd DATA
-      unzip model_outputs.zip
+      tar xvf model_outputs.tar.gz
     Then run:
     
-      bash bin/test13/eval_repacrr_*val.sh
+      bash bin/test13/eval_repacrr_14val.sh
 * For **train and test**, run: 
     
-      bash bin/test13/run_repacrr_*val.sh gpu_device
+      bash bin/test13/run_pacrr_14val.sh gpu_device
+      
+    or, to run using a round-robin procedure:
+
+      bash bin/run_pacrr_test13.sh gpu_device
+    
 
 
 
@@ -69,10 +73,10 @@ Most of the code is available. I will post instructions on how to run it soon.
 Nevertheless, if you can't wait, I'll be glad to instruct you directly how to run it.
 
 # TODOs
-- [ ] Get close to reported results of PACRR
-- [ ] Finish REPACRR model
-  - [ ] Add context
-  - [ ] Add extra Conv layer with kernel len_query*len_query
-  - [ ] Cascade k-max
+- [x] Get close to reported results of PACRR
+- [x] Finish REPACRR model
+  - [x] Add context
+  - [x] Add extra Conv layer with kernel len_query*len_query
+  - [x] Cascade k-max
 - [ ] Add other models
 - [ ] Add instructions to run different models with custom data
