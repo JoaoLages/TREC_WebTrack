@@ -6,7 +6,8 @@ from keras.layers import Permute, Activation, Dense, Flatten, Input, \
 from keras.layers.merge import Concatenate
 from keras.layers.recurrent import LSTM
 from keras.utils import plot_model
-from keras import backend
+from keras.callbacks import TensorBoard
+from keras import backend, regularizers
 import os
 import string
 import random
@@ -65,11 +66,6 @@ def add_ngram_nfilter(ngram_filter, ngrams):
     add_2dfilters(ngram_filter, filters2add)
 
 
-def add_proximity_filters(ngram_filter, proximity=0, len_query=16):
-    if proximity > 0:
-        add_2dfilters(ngram_filter, [(len_query, proximity)])
-
-
 def parse_more_filter(ngram_filter, more_filters):
     '''
     convert the input string to a list of 2d filter sizes in form of tuple.
@@ -89,18 +85,16 @@ def parse_more_filter(ngram_filter, more_filters):
     add_2dfilters(ngram_filter=ngram_filter, filters2add=filters2add)
 
 
-def get_ngram_nfilter(ngrams, proximity, len_query, more_filter_str):
+def get_ngram_nfilter(ngrams, len_query, more_filter_str):
     # Build dictionary
     ngram_filter = dict()
 
     # Main N-Gram filter
     add_ngram_nfilter(ngram_filter, ngrams)
 
-    # Proximity filter
-    add_proximity_filters(ngram_filter, proximity=proximity, len_query=len_query)
-
     # Extra filters
-    parse_more_filter(ngram_filter, more_filter_str)
+    if more_filter_str:
+        parse_more_filter(ngram_filter, more_filter_str)
 
     return ngram_filter
 
@@ -128,42 +122,41 @@ class REPACRR:
             'pos_method': config['sim_matrix_config']['pos_method'],  # similarity matrix distillation method
             'use_context': config['sim_matrix_config']['use_context'],  # include match contexts? (boolean)
 
+            'permute': config['permute'],  # permute the input to the classification head
             'num_negative': config['num_negative'],  # number of non-relevant docs in softmax
-            'shuffle': config['shuffle'],  # 'permute',
-            # shuffle input to the combination layer? (i.e., LSTM or feedforward layer)
             'filter_size': config['filter_size'],  # number of filters to use for the n-gram convolutions
             'top_k': config['top_k'],  # Get top_k after maxpooling to add to scores
             'combine': config['combine'],  # type of combination layer to use. 0 for an LSTM,
             # otherwise the number of feedforward layer dimensions
 
-            # TODO:??
-            'qproximity': 0,  # additional NxN proximity filter to include (0 to disable)
-            'ek': 10,  # topk expansion terms to use when enhance=qexpand or enhance=both
+            # Regularizers
+            'l2_lambda': config['l2_lambda'],
+            'keep_prob': config['keep_prob'],
 
             # configure the sizes of extra filters with format: axb.cxd.<more>
             # for example: 1x100.3x1:> [(1,100), (3,1)]
-            # to turn off, set to an empty string
-            'xfilters': "",
+            'xfilters': config['xfilters'],
 
             # configure the cascade mode of the max-pooling
             # Namely, pool over [first10, first20, ..., first100, wholedoc]
             # instead of only pool on complete document
             # the input is a list of relative positions for pooling
             # for example, 25.50.75.100:> [25,50,75,100] on a doc with length 100
-            # to turn off, set to an empty string
-            'cascade': "",
+            'cascade': config['cascade'],
 
             # To save for data config when loading model
             'sim_matrix_config': config['sim_matrix_config'],
-            'query_idf_config': config['query_idf_config']
+            'query_idf_config': config['query_idf_config'],
+            'use_topic': config['use_topic'],
+            'use_description': config['use_description']
         }
 
         # Model folder
         self.output_dir = config['model_folder']
 
-        # {1: [(1, 1)], 2: [(2, 2)], 3: [(3, 3)]}
+        # Get kernel sizes for convolutions
         self.ngram_filter = get_ngram_nfilter(
-            self.p['ngrams'], self.p['qproximity'], self.p['max_query_len'], self.p['xfilters']
+            self.p['ngrams'], self.p['max_query_len'], self.p['xfilters']
         )
 
         # Metric
@@ -172,6 +165,7 @@ class REPACRR:
         # Build train/predict model later
         self.train_model = None
         self.predict_model = None
+        self.callback = None
 
     def forward(self, r_query_idf, permute_idxs):
         """
@@ -207,7 +201,8 @@ class REPACRR:
             # 2D Convolution Layer
             conv_layers[dim_name] = Conv2D(
                 self.p['filter_size'], kernel_size=(n_query, n_doc), strides=(1, subsample_docdim), padding="same",
-                name='conv_%s' % dim_name, activation='relu', weights=None
+                name='conv_%s' % dim_name, activation='relu', kernel_initializer='he_uniform',
+                kernel_regularizer=regularizers.l2(self.p['l2_lambda'])
             )
 
             # MaxPooling Layer
@@ -248,8 +243,10 @@ class REPACRR:
         else:
             # FF Dense Layers
             dout = Dense(1, name='dense_output')
-            d1 = Dense(self.p['combine'], activation='relu', name='dense_1')
-            d2 = Dense(self.p['combine'], activation='relu', name='dense_2')
+            d1 = Dense(self.p['combine'], activation='relu', kernel_initializer='he_uniform',
+                       kernel_regularizer=regularizers.l2(self.p['l2_lambda']), name='dense_1')
+            d2 = Dense(self.p['combine'], activation='relu', kernel_initializer='he_uniform',
+                       kernel_regularizer=regularizers.l2(self.p['l2_lambda']), name='dense_2')
             rnn_layer = lambda x: dout(d1(d2(Flatten()(x))))
 
         def _permute_scores(inputs):
@@ -305,6 +302,15 @@ class REPACRR:
 
         return _scorer
 
+    def write_log(self, logs, num_log, names=['loss', 'accuracy']):
+        for name, value in zip(names, logs):
+            summary = tf.Summary()
+            summary_value = summary.value.add()
+            summary_value.simple_value = value
+            summary_value.tag = name
+            self.callback.writer.add_summary(summary, num_log)
+            self.callback.writer.flush()
+
     def _cascade_poses(self):
         '''
         initialize the cascade positions, over which
@@ -314,15 +320,16 @@ class REPACRR:
         is equivalent to max-pool over the whole document
         '''
         doc_poses = list()
-        pos_arg = str(self.p['cascade'])
-        if len(pos_arg) > 0:
-            poses = pos_arg.split('.')
-            for p in poses:
-                if len(p) > 0:
-                    p = int(p)
-                    if p <= 0 or p > 100:
-                        raise ValueError("Cascade positions are outside (0,100]: %s" % pos_arg)
-            doc_poses.extend([int((int(p) / 100) * self.p['max_doc_len']) for p in poses if len(p) > 0])
+        if self.p['cascade']:
+            pos_arg = str(self.p['cascade'])
+            if len(pos_arg) > 0:
+                poses = pos_arg.split('.')
+                for p in poses:
+                    if len(p) > 0:
+                        p = int(p)
+                        if p <= 0 or p > 100:
+                            raise ValueError("Cascade positions are outside (0,100]: %s" % pos_arg)
+                doc_poses.extend([int((int(p) / 100) * self.p['max_doc_len']) for p in poses if len(p) > 0])
 
         if self.p['max_doc_len'] not in doc_poses:
             doc_poses.append(self.p['max_doc_len'])
@@ -345,7 +352,7 @@ class REPACRR:
     def build_train(self):
         # Build train model
         r_query_idf = Input(shape=(self.p['max_query_len'], 1), name='query_idf')
-        if self.p['shuffle']:
+        if self.p['permute']:
             permute_input = Input(shape=(self.p['max_query_len'], 2), name='permute', dtype='int32')
         else:
             permute_input = None
@@ -379,12 +386,18 @@ class REPACRR:
         pos_input_list = [pos_inputs[name] for name in pos_inputs]
         neg_input_list = [neg_inputs[neg_ind][ng] for neg_ind in neg_inputs for ng in neg_inputs[neg_ind]]
         inputs = pos_input_list + neg_input_list + [r_query_idf]
-        if self.p['shuffle']:
+        if self.p['permute']:
             inputs.append(permute_input)
 
         # Compile model
         self.train_model = Model(inputs=inputs, outputs=[pos_prob])
         self.train_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+        # Initialize TensorBoard callback
+        self.callback = TensorBoard("%s/logs" % self.output_dir)
+        self.callback.set_model(self.train_model)
+        self.batch_nr = 0
+        self.val_nr = 0
 
         # Initialize loss history
         self.loss_history = []
@@ -410,7 +423,7 @@ class REPACRR:
         self.predict_model = Model(inputs=doc_input_list + [r_query_idf], outputs=[doc_score])
 
     def get_features(self, input, output):
-        if self.p['shuffle']:
+        if self.p['permute']:
             # Add permute
             input['permute'] = np.array(
                 [[(bi, qi)
@@ -428,7 +441,15 @@ class REPACRR:
         # Remove meta-data
         input = {key: input[key] for key in input if key != 'meta-data'}
 
-        self.loss_history.append(self.train_model.train_on_batch(input, output['tags'])[0])
+        # Forward + Backprop
+        logs = self.train_model.train_on_batch(input, output['tags'])
+
+        # Write logs to TensorBoard
+        self.write_log(logs, self.batch_nr)
+        self.batch_nr += 1
+
+        # FIXME: to remove - Save loss history
+        self.loss_history.append(logs[0])
 
         return self.loss_history[-1]
 
@@ -439,7 +460,7 @@ class REPACRR:
 
         # Check that train model exists
         if self.train_model:
-            # Random file name
+            # Save train weights to temp file and load pred weights from it
             random_fn = ''.join(random.choice(string.ascii_lowercase) for _ in range(7))
 
             # Get weights from train model
@@ -450,6 +471,7 @@ class REPACRR:
         # Remove meta-data
         input = {key: input[key] for key in input if key != 'meta-data'}
 
+        # Get probabilities
         probs = self.predict_model.predict_on_batch(input)
         return probs
 

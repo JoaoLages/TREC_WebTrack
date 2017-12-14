@@ -1,4 +1,4 @@
-config_name: 'train09_10_11_12_val14_test13'
+name: 'train09_10_11_12_val14_test13'
 
 datasets:
   train:
@@ -20,8 +20,8 @@ topics_files:
     - topic_files/trec2013-topics.xml
     - topic_files/trec2014-topics.xml
 
-use_description: True
 remove_stopwords: True
+include_spam: False
 
 # embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
 # corpus_folder: DATA/corpora/texts

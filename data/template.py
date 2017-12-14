@@ -1,6 +1,4 @@
-"""
-Simple sinusoid data-set
-"""
+from random import shuffle
 
 
 class Data(object):
@@ -38,3 +36,6 @@ class DataIterator():
 
     def __getitem__(self, index):
         return self.data[index]
+
+    def shuffle(self):
+        shuffle(self.data)

@@ -3,6 +3,7 @@ from data.template import Data as DataTemplate, DataIterator
 from data.pos_methods import *
 from utils.utils import read_file, read_query, read_qrels, split_in_sentences, preprocess_text, EMPTY_TOKEN
 from gensim.models import Word2Vec
+from gensim.matutils import unitvec
 from collections import defaultdict, Counter
 from tqdm import tqdm
 import numpy as np
@@ -10,10 +11,10 @@ import multiprocessing as mp
 
 
 def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
-            remove_stopwords, use_description, select_pos_func,
-            sim_matrix_config, query_idf_config, embeddings, n_grams):
+            remove_stopwords, use_topic, use_description, select_pos_func,
+            sim_matrix_config, query_idf_config, embeddings, n_grams, include_spam):
 
-    qids, cwids, labels, ngram_mats, query_idfs = [], [], [], [], []
+    qids, cwids, labels, ngram_mats, query_idfs, context_vecs = [], [], [], [], [], []
 
     while True:
         qrel = q_recv.get()
@@ -22,63 +23,192 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
         if qrel is None:
             break
 
+        # Filter spam
+        if not include_spam:
+            if int(qrel[3]) == -2:
+                continue
+
         # Initialize variables
-        query_idf, ngram_mat = None, dict()
+        exception = None
+        query_idf, ngram_mat,  context_vec = None, dict(), None
         qid, cwid, label = int(qrel[0]), qrel[2], label2tlabel[int(qrel[3])]
 
-        # Get query or its description
+        # Get preprocessed query and/or its description
+        query = {}
+        if use_topic:
+            query['topic'] = preprocess_text(query_id2text[qid]['query'],
+                                             tokenize=True, all_lower=True, stopw=remove_stopwords).split()
         if use_description:
-            query = query_id2text[qid]['query']
-        else:
-            # Check if description not empty, replace with query if so
-            query = query_id2text[qid]['description']
-            if query == '':
-                query = query_id2text[qid]['query']
-
-        query = preprocess_text(query, tokenize=True, all_lower=True, stopw=remove_stopwords).split()
+            # Check if description not empty, replace with query if so (and if using description only)
+            description = preprocess_text(query_id2text[qid]['description'],
+                                          tokenize=True, all_lower=True, stopw=remove_stopwords).split()
+            if description == '' and not use_topic:
+                description = query_id2text[qid]['query']
+            query['description'] = description
 
         # Initialize article variable but don't read it yet (might not be needed)
         article = None
 
+        desc_idx = None
+        aux_s = []
+        if use_topic:
+            aux_s.append('topic')
+        if use_description:
+            aux_s.append('description')
+
+        if query_idf_config:
+            # Load Query IDF
+            q_idfs = []
+            for x in aux_s:
+                if os.path.isfile('%s/%s.npy' % (query_idf_config['idf_vectors_path'][x], qrel[0])):
+                    # File exists, load it
+                    q_idf = np.load('%s/%s.npy' % (query_idf_config['idf_vectors_path'][x], qrel[0]))
+
+                    if len(q_idf) > query_idf_config['max_query_len']:
+                        # Send exception to main process
+                        exception = "Increase max_query_len. %s/%s.npy has %s length" % \
+                                    (query_idf_config['idf_vectors_path'][x], qrel[0], len(q_idf))
+                        q_send.put([exception], [None], [None], [None], [None])
+                        break
+
+                    if q_idfs:
+                        # when using topic+description
+                        max_len = query_idf_config['max_query_len'] - len(q_idfs[0])
+                        desc_idx = np.sort(np.argsort(q_idf)[::-1][:max_len])
+                        q_idfs.append(q_idf[desc_idx])
+                    else:
+                        q_idfs.append(q_idf)
+                else:
+                    # Send exception to main process
+                    exception = "Could not find file for IDF vector under %s/%s.npy. " \
+                                "Please run bin/construct_query_idf_vectors.sh accordingly."\
+                                % (query_idf_config['idf_vectors_path'][x], qrel[0])
+                    q_send.put([exception], [None], [None], [None], [None])
+                    break
+
+            # Join topic+description vectors
+            query_idf = np.concatenate(q_idfs, axis=0).astype(np.float32)
+            # Pad to max length with zeros
+            query_idf = np.pad(
+                query_idf,
+                pad_width=((0, sim_matrix_config['max_query_len'] - len(query_idf))),
+                mode='constant',
+                constant_values=-np.inf
+            )
+
         if sim_matrix_config:
-            # Load sim_matrix
-            if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'], qrel[0], qrel[2])):
-                # File exists, load it
-                sim_matrix = np.load('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]))
-            else:
-                # File doesn't exist, create matrix
-                if embeddings is None:
-                    # Cannot create matrix
-                    raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                    'and could not load embeddings to construct it. '
-                                    'Please provide embeddings_path in data config'
-                                    % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]))
+            sim_matrices = []
+            contexts = []
+            for x in aux_s:
+                # Load sim_matrix
+                if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])):
+                    # File exists, load it
+                    sim_matrix = np.load('%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]))
+                else:
+                    # File doesn't exist, create matrix
+                    if embeddings is None:
+                        # Send exception to main process
+                        exception = 'Matrix file does not exist under %s/%s/%s.npy ' \
+                                    'and could not load embeddings to construct it. ' \
+                                    'Please provide embeddings_path in data config' \
+                                    % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])
+                        q_send.put([exception], [None], [None], [None], [None])
+                        break
 
-                if article is None:
-                    if corpus_folder is None:
-                        # Cannot create matrix
-                        raise Exception('Matrix file does not exist under %s/%s/%s.npy '
-                                        'and could not load raw text files to construct it. '
-                                        'Please provide corpus_folder in data config'
-                                        % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]))
+                    if article is None:
+                        if corpus_folder is None:
+                            # Send exception to main process
+                            exception = 'Matrix file does not exist under %s/%s/%s.npy ' \
+                                        'and could not load raw text files to construct it. ' \
+                                        'Please provide corpus_folder in data config'\
+                                        % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])
+                            q_send.put([exception], [None], [None], [None], [None])
+                            break
 
-                    article = read_file("%s/%s" % (corpus_folder, qrel[2]))
-                    article = [preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()]
+                        article = read_file("%s/%s" % (corpus_folder, qrel[2]))
+                        article = preprocess_text(article, tokenize=True, all_lower=True, stopw=remove_stopwords).split()
 
-                sim_matrix = build_sim_matrix(query, article[0], embeddings)
-                # Save matrix
-                if not os.path.exists('%s/%s' % (sim_matrix_config['matrices_path'], qrel[0])):
-                    os.makedirs('%s/%s' % (sim_matrix_config['matrices_path'], qrel[0]))
-                np.save(
-                    '%s/%s/%s.npy' % (sim_matrix_config['matrices_path'], qrel[0], qrel[2]),
-                    sim_matrix
-                )
+                    sim_matrix = build_sim_matrix(query[x], article, embeddings)
+                    # Save matrix
+                    if not os.path.exists('%s/%s' % (sim_matrix_config['matrices_path'][x], qrel[0])):
+                        os.makedirs('%s/%s' % (sim_matrix_config['matrices_path'][x], qrel[0]))
+                    np.save(
+                        '%s/%s/%s.npy' % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2]),
+                        sim_matrix
+                    )
+                if sim_matrices:
+                    # when using topic+description
+                    assert desc_idx is not None, "When using topic AND description, query_idf_config is mandatory"
+
+                    # Append previously selected ids to the matrix
+                    sim_matrices.append(sim_matrix[desc_idx])
+                else:
+                    sim_matrices.append(sim_matrix)
+
+            # Leave main loop if Exception occurred
+            if exception:
+                break
+
+            # Join topic+description matrices/vectors
+            sim_matrix = np.concatenate(sim_matrices, axis=0).astype(np.float32)
+
+            # Add context
+            if sim_matrix_config['use_context']:
+                x = '_'.join(aux_s)
+                # Load context vector
+                if os.path.isfile('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])):
+                    # File exists, load it
+                    context_vec = np.load('%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]))
+                else:
+                    # File doesn't exist, create matrix
+                    if embeddings is None:
+                        # Send exception to main process
+                        exception = 'Vector file does not exist under %s/%s/%s.npy ' \
+                                    'and could not load embeddings to construct it. ' \
+                                    'Please provide embeddings_path in data config'\
+                                    % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])
+                        q_send.put([exception], [None], [None], [None], [None])
+                        break
+
+                    if article is None:
+                        if corpus_folder is None:
+                            # Send exception to main process
+                            exception = 'Vector file does not exist under %s/%s/%s.npy ' \
+                                        'and could not load raw text files to construct it. ' \
+                                        'Please provide corpus_folder in data config' \
+                                        % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])
+                            q_send.put([exception], [None], [None], [None], [None])
+                            break
+
+                        article = read_file("%s/%s" % (corpus_folder, qrel[2]))
+                        article = preprocess_text(article, tokenize=True, all_lower=True,
+                                                  stopw=remove_stopwords).split()
+
+                    # Build context vector
+                    if len(aux_s) > 1:
+                        # Join topic + description terms
+                        terms = []
+                        for k in aux_s:
+                            terms += query[k]
+                    else:
+                        terms = query[x]
+                    context_vec = build_context_vector(terms, article, sim_matrix_config['context_window'],
+                                                       embeddings)
+
+                    # Save vector
+                    if not os.path.exists('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0])):
+                        os.makedirs('%s/%s' % (sim_matrix_config['context_path'][x], qrel[0]))
+                    np.save(
+                        '%s/%s/%s.npy' % (sim_matrix_config['context_path'][x], qrel[0], qrel[2]),
+                        context_vec
+                    )
 
             # Query and doc lengths
             len_doc, len_query = sim_matrix.shape[1], sim_matrix.shape[0]
             for n_gram in n_grams:
                 if len_doc > sim_matrix_config['max_doc_len']:
                     # Document too long -> choose positions to keep
+                    # FIXME: change (0,1) to (0,0) ?
                     rmat = np.pad(
                         sim_matrix,
                         pad_width=((0, sim_matrix_config['max_query_len'] - len_query), (0, 1)),
@@ -90,10 +220,9 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     selected_inds = select_pos_func(sim_matrix, sim_matrix_config['max_doc_len'], n_gram)
                     rmat = rmat[:, selected_inds]
 
-                    # TODO: Add context
+                    # FIXME: Why for only last n_gram??
                     if sim_matrix_config['use_context']:
-                        pass
-                        # qid_context[qid][cwid] = qid_context_raw[cwid][selected_inds]
+                        context_vec = context_vec[selected_inds]
 
                 else:
                     # Just pad document
@@ -105,34 +234,31 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                         constant_values=0
                     ).astype(np.float32)
 
-                    # TODO: Add context
                     if sim_matrix_config['use_context']:
-                        # qid_context[qid][cwid] = np.pad(qid_context_raw[cwid],
-                        #                                pad_width=((0, dim_sim - len_doc),),
-                        #                                mode='constant', constant_values=pad_value)
-                        pass
+                        context_vec = np.pad(
+                            context_vec,
+                            pad_width=((0, sim_matrix_config['max_doc_len'] - len_doc),),
+                            mode='constant',
+                            constant_values=0
+                        )
 
                 # Save matrix
                 ngram_mat[n_gram] = rmat
 
-        if query_idf_config:
-            # Load Query IDF
-            if os.path.isfile('%s/%s.npy' % (query_idf_config['idf_vectors_path'], qrel[0])):
-                # File exists, load it
-                query_idf = np.load('%s/%s.npy' % (query_idf_config['idf_vectors_path'], qrel[0]))
-            else:
-                raise Exception("Could not find file for IDF vector under %s/%s.npy. "
-                                "Please run bin/construct_query_idf_vectors.sh accordingly."
-                                % (query_idf_config['idf_vectors_path'], qrel[0]))
+            if sim_matrix_config['use_context']:
+                # hack so that we have the same shape as the sim matrices
+                context_vec = np.array([context_vec for _ in sim_matrix_config['max_query_len']], dtype=np.float32)
+
         # Save
         qids.append(qid)
         cwids.append(cwid)
         labels.append(label)
         ngram_mats.append(ngram_mat)
         query_idfs.append(query_idf)
+        context_vecs.append(context_vec)
 
     # Send info back
-    q_send.put((qids, cwids, labels, ngram_mats, query_idfs))
+    q_send.put((qids, cwids, labels, ngram_mats, query_idfs, context_vecs))
 
 
 def build_sim_matrix(query, document, embeddings):
@@ -146,16 +272,50 @@ def build_sim_matrix(query, document, embeddings):
     return matrix
 
 
-def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_description=True,
-                sim_matrix_config=None, query_idf_config=None, num_negative=1,
-                embeddings_path=None, remove_stopwords=False, shuffle_seed=None):
+def build_context_vector(query, document, context_window, embeddings):
+    """
+    Build context vector
+    """
+
+    # Get query embeddings and average them into a single unit vector
+    query_vector = list(map(lambda x: embeddings[x], query))
+    query_vector = unitvec(np.mean(query_vector, axis=0))
+
+    context = []
+    for i in range(len(document)):
+        begin = i - context_window
+        if begin < 0:
+            begin = 0
+
+        end = i + context_window + 1
+        if end > len(document):
+            end = len(document)
+
+        # Build doc vector
+        doc_vector = list(map(lambda x: embeddings[x], document[begin:end]))
+        doc_vector = unitvec(np.mean(doc_vector, axis=0))
+
+        # Append context
+        context.append(np.dot(query_vector, doc_vector))
+    return np.array(context)
+
+
+def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
+                use_topic=True, use_description=True, sim_matrix_config=None,
+                query_idf_config=None, num_negative=1, embeddings_path=None,
+                remove_stopwords=False, include_spam=True, shuffle_seed=None):
     """
     Reads files needed to build a corpus
     """
 
     # Assertions
+    assert use_topic or use_description
     if sim_matrix_config:
         assert 'matrices_path' in sim_matrix_config, "Provide path to load/store similarity matrices"
+        if use_topic:
+            assert 'topic' in sim_matrix_config['matrices_path'].keys()
+        if use_description:
+            assert 'description' in sim_matrix_config['matrices_path'].keys()
         assert 'ngrams' in sim_matrix_config, "Need 'ngrams' when building sim_matrix"
         assert 'max_doc_len' in sim_matrix_config and 'max_query_len' in sim_matrix_config, \
             "'max_doc_len' and 'max_query_len' has to be provided when building sim_matrix"
@@ -163,6 +323,15 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
         assert 'use_context' in sim_matrix_config, "Need to provide 'use_context' when building sim_matrix"
         assert sim_matrix_config['pos_method'] == 'firstk' or not sim_matrix_config['use_context'], \
             "context is misaligned if we aren't using firstk"
+        if sim_matrix_config['use_context']:
+            assert 'context_path' in sim_matrix_config, "Need to provide 'context_path' when using context"
+            assert 'context_window' in sim_matrix_config, "Need to provide 'context_window' when using context"
+            if use_topic and use_description:
+                assert 'topic_description' in sim_matrix_config['context_path'].keys()
+            elif use_topic:
+                assert 'topic' in sim_matrix_config['context_path'].keys()
+            elif use_description:
+                assert 'description' in sim_matrix_config['context_path'].keys()
     else:
         raise Exception('sim_matrix_config has to be provided now')
 
@@ -171,6 +340,10 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
             "'max_query_len' has to be provided when building query_idf"
         assert 'idf_vectors_path' in query_idf_config, \
             "Need to provide path for IDF query vectors, or run bin/construct_query_idf_vectors.py to build them"
+        if use_topic:
+            assert 'topic' in query_idf_config['idf_vectors_path']
+        if use_description:
+            assert 'description' in query_idf_config['idf_vectors_path']
 
     if sim_matrix_config and query_idf_config:
         assert sim_matrix_config['max_query_len'] == query_idf_config['max_query_len']
@@ -221,6 +394,9 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
 
         qid_ngram_cwid_mat = defaultdict(lambda: defaultdict(dict))  # dict[qid][ngram][cwid] = sim_mat
 
+        if sim_matrix_config['use_context']:
+            qid_cwid_context = defaultdict(dict)
+
         # Function to select positions when document too long
         select_pos_func = eval('select_pos_%s' % sim_matrix_config['pos_method'])
 
@@ -239,8 +415,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
         mp.cpu_count(),
         initializer=process,
         initargs=(q_process_recv, q_process_send, query_id2text, label2tlabel, corpus_folder,
-                  remove_stopwords, use_description, select_pos_func, sim_matrix_config,
-                  query_idf_config, embeddings, n_grams)
+                  remove_stopwords, use_topic, use_description, select_pos_func,
+                  sim_matrix_config, query_idf_config, embeddings, n_grams, include_spam)
     )
 
     # Send qrels
@@ -253,7 +429,11 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
 
     # Receive info
     for _ in range(mp.cpu_count()):
-        for qid, cwid, label, ngram_mat, query_idf in zip(*q_process_send.get()):
+        for qid, cwid, label, ngram_mat, query_idf, context_vec in zip(*q_process_send.get()):
+            # Check for exceptions
+            if cwid is None:
+                raise Exception(qid)  # Exception comes in the qid variable
+
             labels.append(label)
             qid_label_cwids[qid][label].append(cwid)
             qid_cwid_label[qid][cwid] = label
@@ -262,28 +442,19 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
             if sim_matrix_config:
                 for ng in ngram_mat:
                     qid_ngram_cwid_mat[qid][ng][cwid] = ngram_mat[ng]
+                if sim_matrix_config['use_context']:
+                    qid_cwid_context[qid][cwid] = context_vec
 
             # Save Query IDF
             if query_idf_config and qid not in query_idfs:
-                len_query = query_idf.shape[0]
-                if len_query > query_idf_config['max_query_len']:
-                    raise Exception(
-                        "Query has length %s, max_query_len set to %s. Increase max_query_len"
-                        % (len_query, query_idf_config['max_query_len']))
-
-                # Pad query with zeros to max length
-                query_idfs[qid] = np.pad(
-                    query_idf,
-                    pad_width=((0, query_idf_config['max_query_len'] - len_query)),
-                    mode='constant',
-                    constant_values=-np.inf
-                )
+                query_idfs[qid] = query_idf
 
     # Close pool
     pool.close()
     pool.join()
 
-    if dset_folder[-5:] == 'train':
+    # FIXME: Needs to be more general
+    if 'train' in dset_folder.split('/')[-1]:
         """ Logic to construct softmax with 1 positive doc and num_negative negative docs for every training point"""
     
         label_count = Counter(labels)  # label counter
@@ -313,9 +484,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
         qidf_batch = list()
         ys = list()  # holds labels
     
-        # Choose n_batch samples of 1/2 (n_batch is the total number of training samples in here)
-        n_batch = len(labels)
-        selected_labels = np.random.choice([l for l in sorted(sample_label_prob)], size=n_batch, replace=True,
+        # Choose N samples of 1/2 (N is the total number of training samples in here)
+        selected_labels = np.random.choice([l for l in sorted(sample_label_prob)], size=len(labels), replace=True,
                                            p=[sample_label_prob[l] for l in sorted(sample_label_prob)])
         label_counter = Counter(selected_labels)
         for label in label_counter:
@@ -330,7 +500,7 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
     
                 # Check if qid+label has inferior document to pair with (2-1, 1-0)
                 neg_labels = [nl for nl in reversed(range(label)) if nl in qid_label_cwids[qid]]
-                # If it doesnt exist, leave it FIXME: try another qid then to replace it??
+                # If it doesnt exist, leave it
                 if not neg_labels:
                     continue
     
@@ -348,58 +518,46 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
                             p_cwid = pos_cwids[pi]
                             pos_batch[ngram].append(qid_ngram_cwid_mat[qid][ngram][p_cwid])
                             if ngram == min_ngram:
-                                # TODO: Add context
                                 if sim_matrix_config['use_context']:
-                                    # pos_context_batch.append(qid_context[qid][p_cwid])
-                                    pass
+                                    pos_context_batch.append(qid_cwid_context[qid][p_cwid])
                                 ys.append(1)  # positive label
     
-                # Add num_negative randomly picked negative matrices per positive example of that qid to negative batch
-                for neg_ind in range(num_negative):
-                    idx_negs = np.random.choice(list(range(n_neg)), size=qid_counter[qid], replace=True)
-                    if sim_matrix_config:
+                    # Add num_negative randomly picked negative matrices
+                    # per positive example of that qid to negative batch
+                    for neg_ind in range(num_negative):
+                        idx_negs = np.random.choice(list(range(n_neg)), size=qid_counter[qid], replace=True)
                         min_ngram = min(qid_ngram_cwid_mat[qid])
                         for ngram in qid_ngram_cwid_mat[qid]:
                             for ni in idx_negs:
                                 n_cwid = neg_cwids[ni]
                                 neg_batch[ngram][neg_ind].append(qid_ngram_cwid_mat[qid][ngram][n_cwid])
-                                # TODO: Add context
                                 if ngram == min_ngram and sim_matrix_config['use_context']:
-                                    # neg_context_batch[neg_ind].append(qid_context[qid][n_cwid])
-                                    pass
-    
+                                    neg_context_batch[neg_ind].append(qid_cwid_context[qid][n_cwid])
+
                 # Add Query IDF to its batch
                 if query_idf_config:
                     qidf_batch.append(
                         query_idfs[qid].reshape((1, query_idf_config['max_query_len'], 1)).repeat(qid_counter[qid], axis=0)
                     )
     
-        # Shuffle train indices
-        if shuffle_seed:
-            shuffled_index = np.random.permutation(list(range(len(ys))))
-        else:
-            shuffled_index = list(range(len(ys)))
-    
         # INPUT
         if sim_matrix_config:
             for ngram in pos_batch:
-                dset['input']['pos_ngram_%d' % ngram] = np.array(pos_batch[ngram])[shuffled_index, :]
+                dset['input']['pos_ngram_%d' % ngram] = np.array(pos_batch[ngram])
                 for neg_ind in range(num_negative):
                     dset['input']['neg%d_ngram_%d' % (neg_ind, ngram)] = \
-                        np.array(np.array(neg_batch[ngram][neg_ind]))[shuffled_index, :]
+                        np.array(np.array(neg_batch[ngram][neg_ind]))
     
-            # TODO: Add context
             if sim_matrix_config['use_context']:
-                # train_data['pos_context'] = np.array(pos_context_batch)[shuffled_index]
-                # for neg_ind in range(num_negative):
-                #    train_data['neg%d_context' % neg_ind] = np.array(neg_context_batch[neg_ind])[shuffled_index]
-                pass
-    
+                dset['input']['pos_context'] = np.array(pos_context_batch)
+                for neg_ind in range(num_negative):
+                    dset['input']['neg%d_context' % neg_ind] = np.array(neg_context_batch[neg_ind])
+
         if query_idf_config:
-            dset['input']['query_idf'] = np.concatenate(qidf_batch, axis=0)[shuffled_index, :]
-    
+            dset['input']['query_idf'] = np.concatenate(qidf_batch, axis=0)
+
         # OUTPUT
-        dset['output']['tags'] = np.array(ys)[shuffled_index]
+        dset['output']['tags'] = np.array(ys)
     
     else:
         # Dev/Test
@@ -417,10 +575,8 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
                             if query_idf_config:
                                 q_idfs.append(query_idfs[qid].reshape((1, query_idfs[qid].shape[0], 1)))
 
-                            # TODO: Add context
                             if sim_matrix_config['use_context']:
-                                # contexts.append(qid_context[qid][cwid])
-                                pass
+                                contexts.append(qid_cwid_context[qid][cwid])
 
                             # Add label in last iteration
                             ys.append(qid_cwid_label[qid][cwid])
@@ -430,16 +586,17 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder, use_descri
                             cwids.append(cwid)
 
         # INPUT
-        dset['input'] = {'doc_ngram_%d' % ngram: np.array(np.array(doc_vec[ngram])) for ngram in doc_vec}
-        dset['input']['query_idf'] = np.concatenate(q_idfs, axis=0)
-        # TODO: Add context
-        if sim_matrix_config['use_context']:
-            # test_data['doc_context'] = np.array(contexts)
-            pass
-        dset['input']['meta-data'] = {
-            'qids': qids,
-            'cwids': cwids
-        }
+        if sim_matrix_config:
+            dset['input'] = {'doc_ngram_%d' % ngram: np.array(np.array(doc_vec[ngram])) for ngram in doc_vec}
+            dset['input']['meta-data'] = {
+                'qids': qids,
+                'cwids': cwids
+            }
+            if sim_matrix_config['use_context']:
+                dset['input']['doc_context'] = np.array(contexts)
+
+        if query_idf_config:
+            dset['input']['query_idf'] = np.concatenate(q_idfs, axis=0)
 
         # OUTPUT
         # NOTE: These labels don't matter in NDCG20/ERR20 as the model will be evaluated
@@ -483,17 +640,22 @@ class Data(DataTemplate):
             if 'embeddings_path' not in config:
                 config['embeddings_path'] = None
 
+            if 'include_spam' not in config:
+                config['include_spam'] = True
+
             self.datasets[dset] = read_corpus(
                 dset_files,
                 config['topics_files'],
                 config['corpus_folder'],
+                use_topic=config['use_topic'],
                 use_description=config['use_description'],
                 embeddings_path=config['embeddings_path'],
                 sim_matrix_config=config['sim_matrix_config'],
                 query_idf_config=config['query_idf_config'],
                 num_negative=config['num_negative'],
                 remove_stopwords=config['remove_stopwords'],
-                dset_folder="%s/%s" % (config['config_name'], dset),
+                dset_folder="%s/%s" % (config['name'], dset),
+                include_spam=config['include_spam'],
                 shuffle_seed=config['shuffle_seed']
             )
             self.nr_samples[dset] = \
@@ -524,22 +686,30 @@ class Data(DataTemplate):
 
         if shuffle_seed:
             # Shuffle data
-
-            idx = range(len(dset['output']['tags']))
+            idx = list(range(len(dset['output']['tags'])))
             random_state = np.random.RandomState(shuffle_seed)
             random_state.shuffle(idx)
 
             # Sort
             for key, value in dset['input'].items():
                 if key != 'meta-data':
-                    dset['input'][key] = [value[i] for i in idx]
+                    if isinstance(value, np.ndarray):
+                        dset['input'][key] = value[idx]
+                    else:
+                        dset['input'][key] = [value[i] for i in idx]
                 else:
                     for mkey, mvalue in dset['input']['meta-data'].items():
-                        dset['input']['meta-data'][mkey] = [
-                            mvalue[i] for i in idx
-                        ]
+                        if isinstance(value, np.ndarray):
+                            dset['input'][mkey] = mvalue[idx]
+                        else:
+                            dset['input']['meta-data'][mkey] = [
+                                mvalue[i] for i in idx
+                            ]
             for key, value in dset['output'].items():
-                dset['output'][key] = [value[i] for i in idx]
+                if isinstance(value, np.ndarray):
+                    dset['input'][key] = value[idx]
+                else:
+                    dset['output'][key] = [value[i] for i in idx]
 
         data = []
         # Ignore output when solicited

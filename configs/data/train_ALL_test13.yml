@@ -1,13 +1,12 @@
-config_name: 'train09_10_12_14_val11_test13'
+name: 'train_ALL_test13'
 
 datasets:
   train:
     - qrels/new_09.txt
     - qrels/new_10.txt
+    - qrels/new_11.txt
     - qrels/new_12.txt
     - qrels/new_14.txt
-  dev:
-    - qrels/new_11.txt
   test:
     - qrels/new_13.txt
     - rerank_ql: eval/ql_submissions/ql_trec2013.txt
@@ -20,7 +19,6 @@ topics_files:
     - topic_files/trec2013-topics.xml
     - topic_files/trec2014-topics.xml
 
-use_description: True
 remove_stopwords: True
 
 # embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
