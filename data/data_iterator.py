@@ -68,7 +68,12 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                         # Send exception to main process
                         exception = "Increase max_query_len. %s/%s.npy has %s length" % \
                                     (query_idf_config['idf_vectors_path'][x], qrel[0], len(q_idf))
-                        q_send.put([exception], [None], [None], [None], [None])
+                        qids.append(exception)
+                        cwids.append(None)
+                        labels.append(None)
+                        ngram_mats.append(None)
+                        query_idfs.append(None)
+                        context_vecs.append(None)
                         break
 
                     if q_idfs:
@@ -83,8 +88,17 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                     exception = "Could not find file for IDF vector under %s/%s.npy. " \
                                 "Please run bin/construct_query_idf_vectors.sh accordingly."\
                                 % (query_idf_config['idf_vectors_path'][x], qrel[0])
-                    q_send.put([exception], [None], [None], [None], [None])
+                    qids.append(exception)
+                    cwids.append(None)
+                    labels.append(None)
+                    ngram_mats.append(None)
+                    query_idfs.append(None)
+                    context_vecs.append(None)
                     break
+
+            # Leave main loop if Exception occurred
+            if exception:
+                continue
 
             # Join topic+description vectors
             query_idf = np.concatenate(q_idfs, axis=0).astype(np.float32)
@@ -112,7 +126,12 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                                     'and could not load embeddings to construct it. ' \
                                     'Please provide embeddings_path in data config' \
                                     % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])
-                        q_send.put([exception], [None], [None], [None], [None])
+                        qids.append(exception)
+                        cwids.append(None)
+                        labels.append(None)
+                        ngram_mats.append(None)
+                        query_idfs.append(None)
+                        context_vecs.append(None)
                         break
 
                     if article is None:
@@ -122,7 +141,12 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                                         'and could not load raw text files to construct it. ' \
                                         'Please provide corpus_folder in data config'\
                                         % (sim_matrix_config['matrices_path'][x], qrel[0], qrel[2])
-                            q_send.put([exception], [None], [None], [None], [None])
+                            qids.append(exception)
+                            cwids.append(None)
+                            labels.append(None)
+                            ngram_mats.append(None)
+                            query_idfs.append(None)
+                            context_vecs.append(None)
                             break
 
                         article = read_file("%s/%s" % (corpus_folder, qrel[2]))
@@ -147,7 +171,7 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
 
             # Leave main loop if Exception occurred
             if exception:
-                break
+                continue
 
             # Join topic+description matrices/vectors
             sim_matrix = np.concatenate(sim_matrices, axis=0).astype(np.float32)
@@ -167,8 +191,13 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                                     'and could not load embeddings to construct it. ' \
                                     'Please provide embeddings_path in data config'\
                                     % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])
-                        q_send.put([exception], [None], [None], [None], [None])
-                        break
+                        qids.append(exception)
+                        cwids.append(None)
+                        labels.append(None)
+                        ngram_mats.append(None)
+                        query_idfs.append(None)
+                        context_vecs.append(None)
+                        continue
 
                     if article is None:
                         if corpus_folder is None:
@@ -177,8 +206,13 @@ def process(q_recv, q_send, query_id2text, label2tlabel, corpus_folder,
                                         'and could not load raw text files to construct it. ' \
                                         'Please provide corpus_folder in data config' \
                                         % (sim_matrix_config['context_path'][x], qrel[0], qrel[2])
-                            q_send.put([exception], [None], [None], [None], [None])
-                            break
+                            qids.append(exception)
+                            cwids.append(None)
+                            labels.append(None)
+                            ngram_mats.append(None)
+                            query_idfs.append(None)
+                            context_vecs.append(None)
+                            continue
 
                         article = read_file("%s/%s" % (corpus_folder, qrel[2]))
                         article = preprocess_text(article, tokenize=True, all_lower=True,

@@ -9,7 +9,6 @@ epochs: 2
 
 sim_matrix_config:
   matrices_path:
-    topic: DATA/corpora/sim_matrices/topic
     description: DATA/corpora/sim_matrices/description
   max_doc_len: 800
   max_query_len: 16
@@ -23,11 +22,10 @@ sim_matrix_config:
 query_idf_config:
   max_query_len: 16
   idf_vectors_path:
-    topic: DATA/corpora/query_idf/topic
     description: DATA/corpora/query_idf/description
 
 use_description: True
-use_topic: True
+use_topic: False
 
 permute: True
 num_negative: 6
