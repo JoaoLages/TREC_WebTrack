@@ -25,7 +25,7 @@ remove_stopwords: True
 include_spam: False
 use_label_encoder: False
 
-# embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
-# corpus_folder: DATA/corpora/texts
+embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
+corpus_folder: DATA/corpora/texts
 
 shuffle_seed: 42

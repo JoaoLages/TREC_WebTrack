@@ -54,15 +54,14 @@ def argument_parser(sys_argv):
     parser.add_argument('--cnn-out', action='store_true')
     args = parser.parse_args(sys_argv)
 
+    qrel_file_flag = False
     if args.metrics:
         assert all(metric in AVAILABLE_METRICS for metric in args.metrics), \
             "Supported metrics %s" % (" ".join(AVAILABLE_METRICS))
 
-    if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
-        qrel_file_flag = True
-    else:
-        qrel_file_flag = False
-
+        if 'NDCG20' in args.metrics or 'ERR20' in args.metrics:
+            qrel_file_flag = True
+    
     config = parse_config(args.data_config)
     if args.overload:
         config = edit_config(config, args.overload)

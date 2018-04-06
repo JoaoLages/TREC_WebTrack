@@ -436,11 +436,12 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
     assert not include_spam, "'include_spam' has to be set to False"
     if sim_matrix_config:
         assert 'use_static_matrices' in sim_matrix_config, "Need to provide 'use_static_matrices'"
-        assert 'matrices_path' in sim_matrix_config, "Provide path to load/store similarity matrices"
-        if use_topic:
-            assert 'topic' in sim_matrix_config['matrices_path'].keys()
-        if use_description:
-            assert 'description' in sim_matrix_config['matrices_path'].keys()
+        if sim_matrix_config['use_static_matrices']:
+            assert 'matrices_path' in sim_matrix_config, "Provide path to load/store similarity matrices"
+            if use_topic:
+                assert 'topic' in sim_matrix_config['matrices_path'].keys()
+            if use_description:
+                assert 'description' in sim_matrix_config['matrices_path'].keys()
         assert 'use_masking' in sim_matrix_config, "Need 'use_masking' option when building sim_matrix"
         assert 'ngrams' in sim_matrix_config, "Need 'ngrams' when building sim_matrix"
         assert 'max_doc_len' in sim_matrix_config and 'max_query_len' in sim_matrix_config, \
@@ -951,12 +952,6 @@ class Data(DataTemplate):
         # Inherited
         # self.config, self.datasets
         DataTemplate.__init__(self, config)
-
-        assert "topics_files" in config, \
-            "Need to provide 'topics_files' in config"
-
-        assert False not in [os.path.isfile(file) for file in config['topics_files']], \
-            "Not all files exist in %s" % config['topics_files']
 
         # Init variables for retrain
         self.qid2cwid_label, self.qid_cwid_label = None, None
