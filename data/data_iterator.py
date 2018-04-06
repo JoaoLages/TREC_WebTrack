@@ -908,6 +908,40 @@ def read_corpus(dset_files, topics_files, corpus_folder, dset_folder,
     return dset
 
 
+def load_customdata(dset_files, embeddings_path, sim_matrix_config, remove_stopwords):
+    from keras.preprocessing.sequence import pad_sequences
+
+    # Get tokenizer
+    with open('%s/tokenizer_vocabsize.pickle' % os.path.dirname(embeddings_path), 'rb') as handle:
+        tokenizer, _ = pickle.load(handle)
+
+    # Read queries and documents
+    queries, documents = [], []
+    ys = []
+    for file in dset_files:
+        with open(file, 'r') as fp:
+            for x in fp.read().split('\n\n'):
+                x = x.split('\n')
+                if len(x) < 2:
+                    continue
+                query, document = x[0], ' '.join(x[1:])
+                queries.append(preprocess_text(query, tokenize=True, all_lower=True, stopw=remove_stopwords))
+                documents.append(preprocess_text(document, tokenize=True, all_lower=True, stopw=remove_stopwords))
+                ys.append(0)
+
+    dset = {'input': defaultdict(list), 'output': defaultdict(list)}
+    # Encode & pad texts
+    dset['input']['query'] = pad_sequences(tokenizer.texts_to_sequences(queries),
+                                           maxlen=sim_matrix_config['max_doc_len'], padding='post')
+    dset['input']['doc'] = pad_sequences(tokenizer.texts_to_sequences(documents),
+                                         maxlen=sim_matrix_config['max_doc_len'], padding='post')
+
+    # Not used
+    dset['output']['tags'] = np.array(ys)
+
+    return dset
+
+
 class Data(DataTemplate):
     """
     Web Track data
@@ -960,23 +994,32 @@ class Data(DataTemplate):
                                  if not isinstance(file, dict)], \
                 "Not all files exist in %s" % dset_files
 
-            self.datasets[dset] = read_corpus(
-                dset_files,
-                config['topics_files'],
-                config['corpus_folder'],
-                use_topic=config['use_topic'],
-                use_label_encoder=config['use_label_encoder'],
-                use_description=config['use_description'],
-                sim_matrix_config=config['sim_matrix_config'],
-                embeddings_path=config['embeddings_path'],
-                query_idf_config=config['query_idf_config'],
-                num_negative=config['num_negative'],
-                remove_stopwords=config['remove_stopwords'],
-                dset_folder="%s/%s" % (config['name'], dset),
-                include_spam=config['include_spam'],
-                shuffle_seed=config['shuffle_seed'],
-                custom_loss=config['custom_loss']
-            )
+            if 'topics_files' in config:
+                self.datasets[dset] = read_corpus(
+                    dset_files,
+                    config['topics_files'],
+                    config['corpus_folder'],
+                    use_topic=config['use_topic'],
+                    use_label_encoder=config['use_label_encoder'],
+                    use_description=config['use_description'],
+                    sim_matrix_config=config['sim_matrix_config'],
+                    embeddings_path=config['embeddings_path'],
+                    query_idf_config=config['query_idf_config'],
+                    num_negative=config['num_negative'],
+                    remove_stopwords=config['remove_stopwords'],
+                    dset_folder="%s/%s" % (config['name'], dset),
+                    include_spam=config['include_spam'],
+                    shuffle_seed=config['shuffle_seed'],
+                    custom_loss=config['custom_loss']
+                )
+            else:
+                # Load custom data
+                self.datasets[dset] = load_customdata(
+                    dset_files, config['embeddings_path'],
+                    config['sim_matrix_config'],
+                    config['remove_stopwords']
+                )
+
             self.nr_samples[dset] = \
                 len(self.datasets[dset]['output']['tags'])
 

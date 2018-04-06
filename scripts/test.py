@@ -35,6 +35,7 @@ def argument_parser(sys_argv):
         '--metrics',
         nargs='+',
         help="Metrics solicited",
+        default=None,
         type=str
     )
     parser.add_argument(
@@ -160,8 +161,9 @@ if __name__ == '__main__':
                 total_pred = np.array(predictions) / len(total_models)
 
     # Add additional info to model config
-    model.config['qrel_file'] = qrel_file[0]
-    model.config['rerank_files'] = rerank_files
+    if qrel_file_flag:
+        model.config['qrel_file'] = qrel_file[0]
+        model.config['rerank_files'] = rerank_files
 
     # Evaluate
     if args.metrics:

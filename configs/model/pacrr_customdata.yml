@@ -8,18 +8,12 @@ batch_size: 32
 epochs: 50
 
 sim_matrix_config:
-  use_static_matrices: True
-  matrix_build_mode: 1
-  matrices_path:
-    topic: DATA/corpora/cosine/topic_doc_mat
-    description: DATA/corpora/cosine/desc_doc_mat
+  use_static_matrices: False
+  matrix_build_mode: 0
   max_doc_len: 800
   max_query_len: 16
   pos_method: firstk
   use_context: False
-  context_window: 4
-  context_path:
-    topic_description: DATA/corpora/sim_matrices/context_vectors
   use_masking: True
   use_maxpooling: True
   ngrams:  # query_window_size x doc_windows_size (square only allowed)
@@ -28,11 +22,7 @@ sim_matrix_config:
     - 3
 
 query_idf_config:
-  use_query_idf: True
-  max_query_len: 16
-  idf_vectors_path:
-    topic: DATA/corpora/cosine/query_idf/topic_term_idf/
-    description: DATA/corpora/cosine/query_idf/desc_term_idf/
+  use_query_idf: False
 
 use_description: True
 use_topic: True

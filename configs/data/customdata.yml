@@ -1,0 +1,8 @@
+name: 'customdata'
+
+datasets:
+  test:
+    - qrels/customdata.txt
+
+remove_stopwords: True
+shuffle_seed: 42
