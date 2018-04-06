@@ -12,8 +12,6 @@ import numpy as np
 
 
 AVAILABLE_METRICS = {
-    'F1_SCORE',
-    'ACCURACY',
     'NDCG20',
     'ERR20'
 }
@@ -107,10 +105,10 @@ def create_docpairs(pred, gold, info_dict):
     return pkey_qid_acc
 
 
-def ndcg20_err20(pred, info_dict, model_config, use_invrank=False):
-    # Assertion
-    assert 'qids' in info_dict and 'cwids' in info_dict
+def ndcg_err(pred, info_dict, model_config, stop_at=20, use_invrank=True):
 
+    # Assertions
+    assert 'qids' in info_dict and 'cwids' in info_dict
     assert len(info_dict['qids']) == len(info_dict['cwids']) == len(pred), \
         "Length mismatch"
 
@@ -129,44 +127,17 @@ def ndcg20_err20(pred, info_dict, model_config, use_invrank=False):
                     score = qid_cwid_pred[qid][cwid]
                 tmpf.write('%d Q0 %s %d %.10e %s\n' % (qid, cwid, rank, score, model_config['name']))
                 rank += 1
+                if rank > stop_at:
+                    break
         tmpf.flush()
-        val_res = subprocess.check_output([gdeval, '-k', '20', model_config['qrel_file'], tmpf.name]).decode('utf-8')
+        val_res = subprocess.check_output([gdeval, '-k', '%s' % stop_at, model_config['qrel_file'], tmpf.name]).decode('utf-8')
     amean_line = val_res.splitlines()[-1]
     cols = amean_line.split(',')
     ndcg20, err20 = float(cols[-2]), float(cols[-1])
     return ndcg20, err20
 
 
-def f1_score(gold, pred):
-    # precision = tp/(tp+fp)
-    # recall = tp/(tp+fn)
-
-    # Initialize
-    tp = 0.
-    fp = 0.
-    fn = 0.
-
-    for g, p in zip(gold, pred):
-        if g == p:
-            if p == 1:
-                tp += 1
-        else:
-            if p == 1:
-                fp += 1
-            else:
-                fn += 1
-
-    if tp == 0:
-        return 0.
-
-    precision = tp/(tp+fp)
-    recall = tp/(tp+fn)
-
-    return 2.*precision*recall/(precision+recall)
-
-
 def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_config, keep_non_overlaps=False):
-
     metric_scores, metric_names = [], []
 
     info_dict = defaultdict(list)
@@ -201,7 +172,7 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
                         new_probs[key].append(float('-inf'))
 
             # Get NDCG and ERR
-            ndcg20, err20 = ndcg20_err20(new_probs[key], rerank_dict[key], model_config, use_invrank=True)
+            ndcg20, err20 = ndcg_err(new_probs[key], rerank_dict[key], model_config, use_invrank=True)
 
             # Add scores
             metric_scores.append(ndcg20)
@@ -209,19 +180,8 @@ def get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_conf
             metric_scores.append(err20)
             metric_names.append('ERR20-%s' % key)
 
-    if 'ACCURACY' in metrics:
-        correct = sum([1. for p, g in zip(predicted_probs, gold_tags)
-                       if round(p) == g])
-        metric_scores.append(correct / len(gold_tags))
-        metric_names.append('ACCURACY')
-
-    if 'F1_SCORE' in metrics:
-        # FIXME, expected tags not probs
-        metric_scores.append(f1_score(gold_tags, predicted_probs))
-        metric_names.append('F1_SCORE')
-
     if 'NDCG20' in metrics or 'ERR20' in metrics:
-        ndcg20, err20 = ndcg20_err20(predicted_probs, info_dict, model_config)
+        ndcg20, err20 = ndcg_err(predicted_probs, info_dict, model_config)
 
     if 'NDCG20' in metrics:
         metric_scores.append(ndcg20)
@@ -257,6 +217,23 @@ def color(x, color_select):
         return '%s%s%s' % (colors[color_select], x, colors['end'])
 
 
+def evaluate(predicted, gold, metrics, meta_data, model_config):
+    def flatten_list(items):
+        if isinstance(items[0], list):
+            return list(chain.from_iterable(items))
+        else:
+            return items
+
+    # Flatten
+    gold_tags = np.array([
+        x
+        for batch in gold
+        for x in flatten_list(batch['tags'])
+    ])
+
+    return get_metric_scores(metrics, meta_data, predicted, gold_tags, model_config)
+
+
 class TrainLogger():
 
     def __init__(self, config=None):
@@ -266,21 +243,29 @@ class TrainLogger():
         self.loss_history = []
         self.current_loss = None
 
-        self.best_monitoring_metric = 0.
+        self.best_monitoring_metric = -1
         self.epoch = 0
         self.best_epoch = 0
         self.n_samples = None  # update_nrsamples will have to be called
         self.b_size = config['batch_size']
+        self.n_train = config['n_train']
+        self.actual_train = 0
         self.pbar = None
         self.init_time = time.time()
 
-    def reset_logger(self, n_samples):
+    def reset_logger(self, n_samples, hard_reset=False):
         self.n_samples = n_samples
         if self.b_size:
             self.n_batches = ceil(self.n_samples / self.b_size)
         else:
             self.n_batches = 1
         self.batch_idx = 0
+
+        if hard_reset:
+            self.best_monitoring_metric = -1
+            self.epoch = 0
+            self.best_epoch = 0
+            self.actual_train += 1
 
     def update_on_batch(self, objective):
         if objective:
@@ -291,8 +276,8 @@ class TrainLogger():
                 time.sleep(0.1)  # It's how tqdm works...
 
             self.pbar.set_description(
-                'Epoch %i | Batch %i/%i' %
-                (self.epoch + 1, self.batch_idx, self.n_batches)
+                'Train %i/%i | Epoch %i | Batch %i/%i' %
+                (self.actual_train, self.n_train, self.epoch + 1, self.batch_idx, self.n_batches)
             )
             self.current_loss = objective['loss']
             self.pbar.set_postfix(loss=self.current_loss)
@@ -307,33 +292,8 @@ class TrainLogger():
             self.pbar.close()
             self.batch_idx = 0
 
-        def flatten_list(items):
-            if isinstance(items[0], list):
-                return list(chain.from_iterable(items))
-            else:
-                return items
-
-        # Flatten
-        predicted_probs = np.array([
-            y
-            for batch in predictions
-            for y in flatten_list(batch['probs'])
-        ]).astype(int)
-
-        if 'binary_tags' in model_config:
-            gold_tags = np.array([
-                x
-                for batch in gold
-                for x in flatten_list(batch['binary_tags'])
-            ]).astype(int)
-        else:
-            gold_tags = np.array([
-                x for batch in gold for x in flatten_list(batch['tags'])
-            ]).astype(int)
-
         # Get metric scores
-        metric_scores, metric_names = \
-            get_metric_scores(self.metrics, meta_data, predicted_probs, gold_tags, model_config)
+        metric_scores, metric_names = evaluate(predictions, gold, self.metrics, meta_data, model_config)
 
         # Save metrics and loss
         for m_score, m_name in zip(metric_scores, metric_names):

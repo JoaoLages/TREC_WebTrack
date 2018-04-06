@@ -5,39 +5,7 @@ import numpy as np
 from data.data_iterator import Data
 from model.model_interface import ModelInterface
 from utils.utils import parse_config, edit_config
-from itertools import chain
-from model.logger import AVAILABLE_METRICS, get_metric_scores
-
-
-def evaluate(predicted, gold, metrics, meta_data, model_config):
-    def flatten_list(items):
-        if isinstance(items[0], list):
-            return list(chain.from_iterable(items))
-        else:
-            return items
-
-    # Flatten
-    predicted_probs = np.array([
-        y
-        for batch in predictions
-        for y in flatten_list(batch['probs'])
-    ]).astype(int)
-
-    if 'binary_tags' in model_config:
-        gold_tags = np.array([
-            x
-            for batch in gold
-            for x in flatten_list(batch['binary_tags'])
-        ]).astype(int)
-    else:
-        gold_tags = np.array([
-            x for batch in gold for x in flatten_list(batch['tags'])
-        ]).astype(int)
-
-    metric_scores, metric_names = get_metric_scores(metrics, meta_data, predicted_probs, gold_tags, model_config)
-
-    for m_score, m_name in zip(metric_scores, metric_names):
-        print("%s: %2.4f" % (m_name, m_score))
+from model.logger import AVAILABLE_METRICS, evaluate
 
 
 def argument_parser(sys_argv):
@@ -82,6 +50,7 @@ def argument_parser(sys_argv):
         nargs='+',
         type=str
     )
+    parser.add_argument('--cnn-out', action='store_true')
     args = parser.parse_args(sys_argv)
 
     if args.metrics:
@@ -115,72 +84,102 @@ if __name__ == '__main__':
     # Argument handling
     data_config, args, qrel_file_flag = argument_parser(sys.argv[1:])
 
-    # Load model
-    model = ModelInterface(model_folder=args.model_folder)
+    total_models = ["%s/%s" % (args.model_folder, x) for x in os.listdir(args.model_folder) if '.h5' in x]
 
-    # Get parameters
-    model_parameters = model.get('p')
+    if args.cnn_out:
+        assert len(total_models) == 1
 
-    # Pass some keys of model_config to data_config
-    data_config['sim_matrix_config'] = model_parameters['sim_matrix_config']
-    data_config['query_idf_config'] = model_parameters['query_idf_config']
-    data_config['num_negative'] = model_parameters['num_negative']
-    data_config['use_description'] = model_parameters['use_description']
-    data_config['use_topic'] = model_parameters['use_topic']
+    # Init model and total_pred
+    model = ModelInterface(model_folder=total_models[0])
+    total_pred = None
+    for i, model_file in enumerate(total_models):
+        # Load model
+        model.load(model_file)
 
-    # Load data
-    data = Data(config=data_config)
+        # Load data
+        if i == 0:
+            # Get parameters
+            model_parameters = model.get('p')
 
-    if args.datasets:
-        dsets = args.datasets
-    else:
-        dsets = ['test']
+            # Pass some keys of model_config to data_config
+            data_config['sim_matrix_config'] = model_parameters['sim_matrix_config']
+            data_config['query_idf_config'] = model_parameters['query_idf_config']
+            data_config['num_negative'] = model_parameters['num_negative']
+            data_config['use_description'] = model_parameters['use_description']
+            data_config['use_topic'] = model_parameters['use_topic']
+            data_config['custom_loss'] = model_parameters['custom_loss']
 
-    for dset in dsets:
-        if qrel_file_flag:
-            # For TREC qrel file and rerank files
-            qrel_file, rerank_files = [], {}
-            for file in data_config['datasets']['%s' % dset]:
-                if not isinstance(file, dict):
-                    qrel_file.append(file)
-                else:
-                    for key in file:
-                        rerank_files[key] = file[key]
+            # Load data
+            data = Data(config=data_config)
 
-            assert len(qrel_file) == 1, "Only provide one QREL file for %s" % dset
-            model.config['qrel_file'] = qrel_file[0]
-            model.config['rerank_files'] = rerank_files
+            if args.datasets:
+                dsets = args.datasets
+            else:
+                dsets = ['test']
 
-            # Delete rerank files
-            data_config['datasets'][dset] = qrel_file
+        for dset in dsets:
+            if i == 0:
+                if qrel_file_flag:
+                    # For TREC qrel file and rerank files
+                    qrel_file, rerank_files = [], {}
+                    for file in data_config['datasets']['%s' % dset]:
+                        if not isinstance(file, dict):
+                            qrel_file.append(file)
+                        else:
+                            for key in file:
+                                rerank_files[key] = file[key]
+                    assert len(qrel_file) == 1, "Only provide one QREL file for %s" % dset
 
-        # Train
-        set_features = data.batches(
-            dset,
-            batch_size=model.config['batch_size'],
-            features_model=model.get_features
-        )
+                    # Delete rerank files
+                    data_config['datasets'][dset] = qrel_file
 
-        # Predict
-        predictions = []
-        gold = []
-        meta_data = []
-        for batch in set_features:
-            predictions.append(model.predict(batch['input']))
-            gold.append(batch['output'])
-            if 'meta-data' in batch['input']:
-                meta_data.append(batch['input']['meta-data'])
+                # Get batches
+                set_features = data.batches(
+                    [dset],
+                    batch_size=model.config['batch_size'],
+                    features_model=model.get_features
+                )
 
-        # Evaluate
-        if args.metrics:
-            print("%s%s%s" % ('\033[1;33m', " ".join(data_config['datasets'][dset]), '\033[0;0m'))
-            evaluate(predictions, gold, args.metrics, meta_data, model.config)
+            # Predict
+            predictions, cnn_outs = [], []
+            if i == 0:
+                gold = []
+                meta_data = []
+            for batch in set_features:
+                predictions.extend(model.predict(batch['input']))
+                if args.cnn_out:
+                    cnn_outs.append(model.get_kmax_input(batch['input']))
+                if i == 0:
+                    gold.append(batch['output'])
+                    if 'meta-data' in batch['input']:
+                        meta_data.append(batch['input']['meta-data'])
 
-        # Save results
-        if args.results_folder:
-            file_path = "%s/%s.probs" % (args.results_folder, dset)
-            with open(file_path, 'w') as fid:
-                for res in predictions:
-                    for x in res['probs']:
-                        fid.write('%1.5f\n' % x)
-            print("Wrote %s" % file_path)
+            if total_pred is not None:
+                total_pred += np.array(predictions) / len(total_models)
+            else:
+                total_pred = np.array(predictions) / len(total_models)
+
+    # Add additional info to model config
+    model.config['qrel_file'] = qrel_file[0]
+    model.config['rerank_files'] = rerank_files
+
+    # Evaluate
+    if args.metrics:
+        print("%s%s%s" % ('\033[1;33m', " ".join(data_config['datasets'][dset]), '\033[0;0m'))
+        metric_scores, metric_names = evaluate(total_pred, gold, args.metrics, meta_data, model.config)
+        for m_score, m_name in zip(metric_scores, metric_names):
+            print("%s: %2.4f" % (m_name, m_score))
+
+    # Save midlayer outputs
+    if args.cnn_out:
+        import pickle
+        with open('cnn_outputs.pkl', 'wb') as f:
+            pickle.dump([cnn_outs, meta_data], f)
+
+    # Save results
+    if args.results_folder:
+        file_path = "%s/%s.probs" % (args.results_folder, dset)
+        with open(file_path, 'w') as fid:
+            for x in predictions:
+                fid.write('%1.5f\n' % x)
+        print("Wrote %s" % file_path)

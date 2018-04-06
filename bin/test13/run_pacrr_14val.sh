@@ -15,7 +15,7 @@ python scripts/train.py \
     --model-config ${MODEL_CONFIGS}/${MODEL}.yml \
     --model-folder DATA/${OUTPUT}/${DATA}/${MODEL} \
     --metrics NDCG20 ERR20\
-    --overload model.gpu_device=${1}
+    --overload model.gpu_device=${1} 
 
 printf "\nTesting \033[94m%s\033[0m on \033[94m%s\033[0m\n" ${DATA} ${MODEL}
 python scripts/test.py \

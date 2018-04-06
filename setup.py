@@ -11,8 +11,8 @@ try:
     # install_requires is a list of requirement
     install_requires = [str(ir.req) for ir in install_reqs]
 except:
-    # This is a bit of an ugly hack, but pip is not installed on EMR
     install_requires = []
+    print("WARNING: Could not install python packages, run 'pip install -r requirements.txt' afterwards.")
 
 
 package_data = {
@@ -28,7 +28,7 @@ setup(
         'Development Status :: 3 - Alpha',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
         'Operating System :: OS Independent',
     ],
     packages=find_packages(),

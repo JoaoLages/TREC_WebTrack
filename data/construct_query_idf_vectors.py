@@ -54,12 +54,6 @@ def argument_parser(sys_argv):
         type=str
     )
     parser.add_argument(
-        '--use-description',
-        help="Bool variable for using description or topic",
-        default=True,
-        type=bool
-    )
-    parser.add_argument(
         '--remove-stopwords',
         help="Bool variable ro remove stopwords",
         default=True,
@@ -106,41 +100,50 @@ if __name__ == '__main__':
     for _ in range(mp.cpu_count()):
         q_process_recv.put(None)
 
-    # Get queries vocab (no need to parallelize this)
-    queries = [
-        preprocess_text(query_id2text[qid]['description'], tokenize=True, all_lower=True, stopw=args.remove_stopwords).split()
-        if args.use_description
-        else preprocess_text(query_id2text[qid]['query'], tokenize=True, all_lower=True, stopw=args.remove_stopwords).split()
-        for qid in sorted(query_id2text.keys())
-    ]
-
     # Receive info
     article_words = []
     for _ in range(mp.cpu_count()):
         for x in zip(*q_process_send.get()):
             article_words += x
-    vocabulary = article_words + list(itertools.chain.from_iterable(queries))
 
-    # Construct vectorizer
-    vectorizer = TfidfVectorizer(
-        use_idf=True,
-        norm='l2',
-        smooth_idf=False,
-        sublinear_tf=False,  # tf = 1+ln(tf)
-        binary=False,
-        max_features=None
-    )
+    # Close pool
+    pool.close()
+    pool.join()
 
-    # Get IDF dict
-    vectorizer.fit_transform(vocabulary)
-    idf = vectorizer.idf_
-    word2idf = dict(zip(vectorizer.get_feature_names(), idf))
+    # Get topics and descriptions vocab
+    topics = [
+        preprocess_text(query_id2text[qid]['query'], tokenize=True, all_lower=True, stopw=args.remove_stopwords).split()
+        for qid in sorted(query_id2text.keys())
+    ]
+    descriptions = [
+        preprocess_text(query_id2text[qid]['description'], tokenize=True, all_lower=True, stopw=args.remove_stopwords).split()
+        for qid in sorted(query_id2text.keys())
+    ]
 
-    if not os.path.isdir(args.outdir):
-        os.makedirs(args.outdir)
+    for queries, f_name in zip([topics, descriptions], ['topic', 'description']):
+        vocabulary = article_words + list(itertools.chain.from_iterable(queries))
 
-    # Get query IDF vectors
-    for query, qid in tqdm(zip(queries, sorted(query_id2text.keys())), total=len(queries), desc='Saving IDF vectors'):
-        query_idf = np.array(list(map(lambda x: word2idf[x], query)))
-        # Save IDF array
-        np.save('%s/%s.npy' % (args.outdir, qid), query_idf)
+        # Construct vectorizer
+        vectorizer = TfidfVectorizer(
+            use_idf=True,
+            norm='l2',
+            smooth_idf=False,
+            sublinear_tf=False,  # tf = 1+ln(tf)
+            binary=False,
+            max_features=None,
+            token_pattern=r"(?u)\b\w+\b"
+        )
+
+        # Get IDF dict
+        vectorizer.fit_transform(vocabulary)
+        idf = vectorizer.idf_
+        word2idf = dict(zip(vectorizer.get_feature_names(), idf))
+
+        if not os.path.isdir("%s/%s" % (args.outdir, f_name)):
+            os.makedirs("%s/%s" % (args.outdir, f_name))
+
+        # Get query IDF vectors
+        for query, qid in tqdm(zip(queries, sorted(query_id2text.keys())), total=len(queries), desc='Saving IDF vectors'):
+            query_idf = np.array(list(map(lambda x: word2idf[x], query)))
+            # Save IDF array
+            np.save("%s/%s/%s.npy" % (args.outdir, f_name, qid), query_idf)

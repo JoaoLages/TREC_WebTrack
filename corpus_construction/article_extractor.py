@@ -3,12 +3,69 @@ import json
 import os
 import sys
 import argparse
-import threading
-import time
 from utils import DIFFBOT_TOKEN
 from utils.utils import read_file, read_qrels, write_file, preprocess_text
 from boilerpipe.extract import Extractor
 from tqdm import tqdm
+import multiprocessing as mp
+import time
+
+
+def run_process(q_recv, q_send, in_folder, out_folder, failed_extractions_file, max_tries, use_diffbot):
+    """
+    Tries 'max_tries' times to extract text using
+    At the end, if using diffbot, tries one last time with boilerpipe
+    """
+
+    texts, trec_ids = [], []
+
+    def retrieve_texts_from_html(html, use_diffbot=False):
+        """ Use the Diffbot API/Boilerpipe to retrieve texts from HTML """
+
+        if use_diffbot:
+            dummy_url = 'https://www.diffbot.com/dev/analytics/'
+            url_api = "https://api.diffbot.com/v3/article?token=%s" \
+                      "&discussion=false&url=%s" % (DIFFBOT_TOKEN, dummy_url)
+            headers = {'Content-type': 'text/html'}
+            content = json.loads(requests.post(url_api, data=html, headers=headers).text)
+
+            text = content["objects"][0]["text"]
+            title = content["objects"][0]["title"]
+
+            text = '\n'.join([title, text])
+        else:
+            text = Extractor(extractor='ArticleExtractor', html=html).getText()
+
+        return text
+
+    while True:
+        trec_id = q_recv.get()
+
+        # Check end condition
+        if trec_id is None:
+            break
+
+        # Check if file exists
+        if not os.path.isfile("%s/%s" % (in_folder, trec_id)):
+            continue
+
+        # Read HTML
+        html = read_file("%s/%s" % (in_folder, trec_id), encoding='latin1')
+
+        i = 0
+        while i != max_tries:
+            try:
+                texts.append(retrieve_texts_from_html(html, use_diffbot=use_diffbot))
+                trec_ids.append(trec_id)
+                break
+            except Exception as e:  # Extraction failed
+                # print(e)
+                i += 1
+
+        if i == max_tries:
+            write_file("%s\n" % trec_id, failed_extractions_file, 'a')
+
+    q_send.put((texts, trec_ids))
 
 
 def retrieve_texts_from_html(html, use_diffbot=False):
@@ -31,33 +88,6 @@ def retrieve_texts_from_html(html, use_diffbot=False):
     return text
 
 
-def run_thread(html, folder, trec_id, failed_extractions_file, max_tries=5, use_diffbot=False):
-    """
-    Tries 'max_tries' times to extract text using
-    At the end, if using diffbot, tries one last time with boilerpipe
-    """
-    i = 0
-    while i != max_tries:
-        try:
-            text = retrieve_texts_from_html(html, use_diffbot=use_diffbot)
-            write_file(text, '%s/%s' % (folder, trec_id))
-            return
-        except:  # Extraction failed
-            i += 1
-
-    if use_diffbot:
-        # Try one last time with Boilerpipe
-        try:
-            text = retrieve_texts_from_html(html, use_diffbot=False)
-            write_file(text, '%s/%s' % (folder, trec_id))
-            return
-        except:
-            pass
-
-    # FIXME: Failed extraction
-    write_file("%s\n" % trec_id, failed_extractions_file, 'a')
-
-
 def argument_parser(sys_argv):
     # ARGUMENT HANDLING
     parser = argparse.ArgumentParser(
@@ -67,12 +97,6 @@ def argument_parser(sys_argv):
         '--max-tries',
         help="Max tries to extract each text from html",
         default=20,
-        type=int
-    )
-    parser.add_argument(
-        '--thread-limit',
-        help="Max number of threads",
-        default=250,
         type=int
     )
     parser.add_argument(
@@ -131,8 +155,8 @@ def argument_parser(sys_argv):
         print('with Diffbot ', end='')
     else:
         print('with Boilerpipe ', end='')
-    print('(%d max tries for each HTML and %d max threads running)'
-          % (args.max_tries, args.thread_limit))
+    print('(%d max tries for each HTML)'
+          % args.max_tries)
 
     return args
 
@@ -169,20 +193,52 @@ if __name__ == '__main__':
         else:
             trec_ids += [id[0] for id in ids]
 
-    # Get unique ids
+    # Get unique ids and extract texts
     trec_ids = list(set(trec_ids))
+    q_process_recv = mp.Queue(maxsize=mp.cpu_count())
+    q_process_send = mp.Queue(maxsize=mp.cpu_count())
+    pool = mp.Pool(
+        mp.cpu_count(),
+        initializer=run_process,
+        initargs=(q_process_recv, q_process_send, args.in_folder, args.out_folder, args.failed_extractions_file, args.max_tries, args.use_diffbot)
+    )
+    for trec_id in tqdm(trec_ids, desc='Transforming HTMLs'):
+        q_process_recv.put(trec_id)  # blocks until q below its max size
 
-    for trec_id in tqdm(trec_ids, total=len(trec_ids)):
-        # Read HTML
-        html = read_file("%s/%s" % (args.in_folder, trec_id), mode='rb', encoding=None)
+    # Tell workers we're done
+    for _ in range(mp.cpu_count()):
+        q_process_recv.put(None)
 
-        # Wait loop
-        while threading.active_count() >= args.thread_limit:
-            time.sleep(2)  # Sleep for 2 seconds
-            pass
+    # Receive info
+    pbar = tqdm(total=len(trec_ids), ncols=100, leave=True, desc='Writing texts')
+    time.sleep(0.1)  # It's how tqdm works...
+    for _ in range(mp.cpu_count()):
+        for text, trec_id in zip(*q_process_send.get()):
+            write_file(text, '%s/%s' % (args.out_folder, trec_id))
+            pbar.update(1)
 
-        # Call thread
-        threading.Thread(
-            target=run_thread,
-            args=(html, args.out_folder, trec_id, args.failed_extractions_file, args.max_tries, args.use_diffbot)
-        ).start()
+    # Close pool
+    pool.close()
+    pool.join()
+
+    # for trec_id in tqdm(trec_ids, total=len(trec_ids)):
+    #     # Check if file exists
+    #     if not os.path.isfile("%s/%s" % (args.in_folder, trec_id)):
+    #         continue
+    #     # Read HTML
+    #     html = read_file("%s/%s" % (args.in_folder, trec_id), encoding='latin1')
+    #
+    #     i = 0
+    #     while i != args.max_tries:
+    #         try:
+    #             text = retrieve_texts_from_html(html, use_diffbot=args.use_diffbot)
+    #             write_file(text, '%s/%s' % (args.out_folder, trec_id))
+    #             break
+    #         except Exception as e:  # Extraction failed
+    #             print(e)
+    #             i += 1
+    #
+    #     # FIXME: Failed extraction
+    #     if i == args.max_tries:
+    #         write_file("%s\n" % trec_id, args.failed_extractions_file, 'a')
+

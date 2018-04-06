@@ -4,7 +4,7 @@ from random import shuffle
 import gensim
 from gensim.models import Word2Vec
 import argparse
-from utils.utils import read_file, read_query, preprocess_text
+from utils import read_file, read_query, preprocess_text
 from tqdm import tqdm
 
 '''
@@ -42,22 +42,16 @@ def argument_parser(sys_argv):
         required=True,
         type=str
     )
-    parser.add_argument(
-        '--topic-or-desc',
-        help="topic vs description",
-        default='description',
-        type=str
-    )
 
     args = parser.parse_args(sys_argv)
 
-    return args.datadir, args.trec_query_file, args.outdir, args.googlepretrain, args.topic_or_desc
+    return args.datadir, args.trec_query_file, args.outdir, args.googlepretrain
 
 
 if __name__ == '__main__':
 
     # Argument handling
-    cwid_txt_dir, query_xml_file, outdir, g_pretrain_bin_file, topic_or_desc = \
+    cwid_txt_dir, query_xml_file, outdir, g_pretrain_bin_file = \
         argument_parser(sys.argv[1:])
 
     query_id2text = read_query(query_xml_file)
@@ -73,9 +67,16 @@ if __name__ == '__main__':
                 ).split()
             )
     for qid in query_id2text:
+        # Add topic
         alldocs.append(
             preprocess_text(
-                query_id2text[qid][topic_or_desc], tokenize=True, all_lower=True
+                query_id2text[qid]['query'], tokenize=True, all_lower=True
+            ).split()
+        )
+        # Add description
+        alldocs.append(
+            preprocess_text(
+                query_id2text[qid]['description'], tokenize=True, all_lower=True
             ).split()
         )
 
