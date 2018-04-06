@@ -7,7 +7,7 @@ DATA_CONFIGS=configs/data
 MODEL_CONFIGS=configs/model
 OUTPUT=model_outputs
 DATA=customdata
-MODEL=pacrr_customdata
+MODEL=pacrr
 
 printf "\nTesting \033[94m%s\033[0m on \033[94m%s\033[0m\n" ${DATA} ${MODEL}
 python scripts/test.py \

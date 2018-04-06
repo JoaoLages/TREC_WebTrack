@@ -7,7 +7,7 @@ DATA_CONFIGS=configs/data
 MODEL_CONFIGS=configs/model
 OUTPUT=model_outputs
 DATA=train_ALL_test14
-MODEL=pacrr_drop
+MODEL=pacrr
 
 printf "Training \033[94m%s\033[0m on \033[94m%s\033[0m\n" ${DATA} ${MODEL}
 python scripts/train.py \
