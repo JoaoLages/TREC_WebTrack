@@ -21,14 +21,14 @@ sim_matrix_config:
   context_path:
     topic_description: DATA/corpora/sim_matrices/context_vectors
   use_masking: True
-  use_maxpooling: True
+  use_maxpooling: False
   ngrams:  # query_window_size x doc_windows_size (square only allowed)
     - 1
     - 2
     - 3
 
 query_idf_config:
-  use_query_idf: True
+  use_query_idf: False
   max_query_len: 16
   idf_vectors_path:
     topic: DATA/corpora/cosine/query_idf/topic_term_idf/

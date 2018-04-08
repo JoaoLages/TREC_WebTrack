@@ -180,6 +180,7 @@ if __name__ == '__main__':
     # Save results
     if args.results_folder:
         file_path = "%s/%s.probs" % (args.results_folder, dset)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True) 
         with open(file_path, 'w') as fid:
             for x in predictions:
                 fid.write('%1.5f\n' % x)

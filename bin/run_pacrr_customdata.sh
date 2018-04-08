@@ -8,7 +8,7 @@ MODEL_CONFIGS=configs/model
 OUTPUT=model_outputs
 DATA=customdata
 MODEL=pacrr_customdata
-ORIGINAL_DATA=train09_10_11_12_val14_test13
+ORIGINAL_DATA=mydata
 
 printf "\nTesting \033[94m%s\033[0m on \033[94m%s\033[0m\n" ${DATA} ${MODEL}
 python scripts/test.py \
@@ -16,4 +16,3 @@ python scripts/test.py \
     --model-folder DATA/${OUTPUT}/${ORIGINAL_DATA}/${MODEL} \
     --results-folder DATA/${OUTPUT}/${DATA}/${MODEL}
 
-printf "Relevance scores saved under %s/test.probs" DATA/${OUTPUT}/${DATA}/${MODEL}
