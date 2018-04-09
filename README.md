@@ -49,7 +49,7 @@ Under your `DATA` directory, download the official [similarity matrices](https:/
     
 Also download the [query idf vectors](https://drive.google.com/open?id=1rmdyYjcBGX0D8nVfpSE760MLiac1qx3C):
 
-    cd DATA
+    cd DATA/corpora/
     unzip query_idf.zip
     
 
