@@ -43,6 +43,8 @@ Throughout the instructions, replace `gpu_device` with the CUDA_ID you want to r
 Under your `DATA` directory, download the official [similarity matrices](https://drive.google.com/file/d/0B3FrsWe6Y5YqdEtfSjI4N0h1LXM/view?usp=sharing), provided by the authors, and extract them using:
 
     cd DATA
+    mkdir corpora
+    cd corpora
     tar xvf simmat.tar.gz
 
 Now you can either **train and test** or **test only** the PACRR model.
