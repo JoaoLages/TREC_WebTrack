@@ -1,0 +1,9 @@
+name: 'customdata'
+
+datasets:
+  test:
+    - qrels/customdata.txt
+
+embeddings_path: DATA/embeddings/
+remove_stopwords: True
+shuffle_seed: 42

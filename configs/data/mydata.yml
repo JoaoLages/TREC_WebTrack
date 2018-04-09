@@ -1,0 +1,32 @@
+name: 'mydata'
+
+datasets:
+  train:
+    - qrels/2009Bqrels.adhoc.txt
+    - qrels/2010Bqrels.adhoc.txt
+    - qrels/2011Bqrels.adhoc.txt
+    - qrels/2012Bqrels.adhoc.txt
+  dev:
+    - qrels/2014Bqrels.adhoc.txt
+  test:
+    - qrels/2013Bqrels.adhoc.txt
+    - rerank_ql: eval/ql_submissions/ql_trec2013.txt
+    - rerank_lemur: eval/ql_submissions/lemur_trec2013.txt
+
+topics_files:
+    - topic_files/trec2009-topics.xml
+    - topic_files/trec2010-topics.xml
+    - topic_files/trec2011-topics.xml
+    - topic_files/trec2012-topics.xml
+    - topic_files/trec2013-topics.xml
+    - topic_files/trec2014-topics.xml
+
+remove_stopwords: True
+include_spam: False
+use_label_encoder: False
+
+embeddings_path: DATA/embeddings/retrained-w2v-clueweb12
+corpus_folder: DATA/corpora/texts
+
+shuffle_seed: 42
+

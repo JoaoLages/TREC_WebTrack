@@ -1,0 +1,62 @@
+name: REPACRR
+seed: 42
+gpu_device: null
+
+metric: ERR20
+
+batch_size: 32
+epochs: 50
+
+sim_matrix_config:
+  use_static_matrices: True
+  matrix_build_mode: 1
+  matrices_path:
+    topic: DATA/corpora/cosine/topic_doc_mat
+    description: DATA/corpora/cosine/desc_doc_mat
+  max_doc_len: 800
+  max_query_len: 16
+  pos_method: firstk
+  use_context: False
+  context_window: 4
+  context_path:
+    topic_description: DATA/corpora/sim_matrices/context_vectors
+  use_masking: True
+  use_maxpooling: False
+  ngrams:  # query_window_size x doc_windows_size (square only allowed)
+    - 1
+    - 2
+    - 3
+
+query_idf_config:
+  use_query_idf: False
+  max_query_len: 16
+  idf_vectors_path:
+    topic: DATA/corpora/cosine/query_idf/topic_term_idf/
+    description: DATA/corpora/cosine/query_idf/desc_term_idf/
+
+use_description: True
+use_topic: True
+
+# Hyperparameters
+use_convs: True
+custom_loss: False
+permute: False
+num_negative: 6
+filter_size: 32
+top_k: 3
+combine: 16
+cascade: null  # 25.50.75.100
+
+# Regularization
+l2_lambda: 0.01
+drop_rate: 0.35
+batch_norm: False
+
+nr_samples: 4096  # comment this line to use all data (per epoch)
+
+# Retrain (Disclaimer: Dont use this)
+retrain: False
+retrain_weight: 3.0
+retrain_mode: 1
+
+plot_model: True

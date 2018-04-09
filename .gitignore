@@ -1,0 +1,8 @@
+.gitignore
+.gitmodules
+venv/
+*.egg-info/
+.idea/
+*.pyc
+.env
+DATA
