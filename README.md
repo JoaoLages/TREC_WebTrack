@@ -2,7 +2,7 @@
 This is a repository used to employ Machine Learning models on the adhoc task, [TREC Web Track](https://trec.nist.gov/data/webmain.html).
 Any issues, PRs or suggestions will be welcome.
 
-To be more specific, these models are reranking models.
+To be more specific, these models are reranking models for query-document pairs.
 Since the cost of computing the relevance score for every query-document pair is too 
 high, the objective is to rerank the QL submissions of each 
 year, that you can find in [here](https://github.com/trec-web/trec-web-2014/tree/master/data/runs/baselines).
@@ -34,7 +34,6 @@ Their implementation was adapted from the [official release](https://github.com/
 Under your DATA directory you'll need to have different data, depending whether:
 - [You want to reproduce results on the TREC Web Track](#reproduce-trec-web-track-results)
 - [You want to use a pre-trained model on your own data](#using-a-pre-trained-model-on-your-data)
-- [You want to train a new model using your own data](#place-2)
 
 
 ## Reproduce TREC Web Track results
@@ -55,20 +54,41 @@ Now you can either **train and test** or **test only** the PACRR model.
 
       bash bin/test1*/run_pacrr_test1*.sh gpu_device
 
-* For **test only**, you'll need to download my [weights files](https://drive.google.com/file/d/15Q3lvUWNZk8n0_vRUp3MPWaRS6tbKadR/view?usp=sharing) and extract them under DATA.
+* For **test only**, you'll need to download my [weights files](https://drive.google.com/open?id=14PaETJGPvNeLIo_YpcjaUak-gset0YLa) and extract them under DATA.
       
       cd DATA
-      tar xvf model_outputs.tar.gz
+      unzip model_outputs.zip
       
     Then comment the part of the `bin/test1*/` bash files that call `script/train.py` and run the same way as described for **train and test**.
 
 ## Using a pre-trained model on your data
 
-You'll need to download my [weights files](https://drive.google.com/file/d/15Q3lvUWNZk8n0_vRUp3MPWaRS6tbKadR/view?usp=sharing) and extract them under DATA.
+You'll need to download my [weights files](https://drive.google.com/open?id=14PaETJGPvNeLIo_YpcjaUak-gset0YLa) and extract them under DATA.
 
       cd DATA
-      tar xvf model_outputs.tar.gz
+      unzip model_outputs.zip
+
+and the pretrained [embeddings](https://www.dropbox.com/s/khi6aw48fijg14m/embeddings.zip?dl=0)
+      cd DATA
+      unzip embeddings.zip
       
-Then copy a bash file, for example `bin/test13/run_pacrr_14_val.sh`. You will have to modify the `DATA` variable in that script (do not confuse with the soft link), 
-that is currently set to `train09_10_11_12_val14_test13`. Therefore, change that whole line to `DATA=mydata`.
-Create the file `configs/data/mydata.yml` 
+      
+Now, you will have to change the file `qrels/customdata.txt` according to your data. 
+As you can see in the example file I have, the file is constructed with the following format:
+```
+query text
+document text
+
+(...)
+
+query text
+document text
+```
+
+Just change this file with your queries and document and run:
+
+    bash bin/run_pacrr_customdata.sh
+
+At the end, a message will be printed by that script saying where the `test.probs` file was saved.
+That file contains the relevance scores of every query-document pair you inserted in `qrels/customdata.txt`.
+     
