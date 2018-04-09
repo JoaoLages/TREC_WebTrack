@@ -46,6 +46,12 @@ Under your `DATA` directory, download the official [similarity matrices](https:/
     mkdir corpora
     cd corpora
     tar xvf simmat.tar.gz
+    
+Also download the [query idf vectors](https://drive.google.com/open?id=1rmdyYjcBGX0D8nVfpSE760MLiac1qx3C):
+
+    cd DATA
+    unzip query_idf.zip
+    
 
 Now you can either **train and test** or **test only** the PACRR model.
 * For **train and test**, run any script under `bin/test13` or `bin/test14` as the following example: 

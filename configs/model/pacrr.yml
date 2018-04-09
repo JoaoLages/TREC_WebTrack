@@ -29,6 +29,10 @@ sim_matrix_config:
 
 query_idf_config:
   use_query_idf: False
+  max_query_len: 16
+  idf_vectors_path:
+    topic: DATA/corpora/cosine/query_idf/topic_term_idf/
+    description: DATA/corpora/cosine/query_idf/desc_term_idf/
 
 use_description: True
 use_topic: True
