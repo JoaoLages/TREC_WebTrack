@@ -25,7 +25,7 @@ jupyter-core==4.4.0
 Keras==2.0.9
 Markdown==2.6.9
 nbformat==4.4.0
-nltk==3.2.5
+nltk==3.4.5
 numpy==1.13.3
 parso==0.1.0
 pexpect==4.3.0
